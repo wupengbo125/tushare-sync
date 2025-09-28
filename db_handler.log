@@ -1,3 +1,17 @@
 2025-09-28 21:35:10,990 - db_handler - INFO - 数据库连接成功: localhost:3306/tushare_sync
 2025-09-28 21:35:11,448 - db_handler - INFO - 表 stock_hot_rank 已存在
 2025-09-28 21:35:11,511 - db_handler - INFO - 成功插入 100 行数据到 stock_hot_rank
+2025-09-28 21:42:53,852 - db_handler - INFO - 数据库连接成功: localhost:3306/tushare_sync
+2025-09-28 21:42:54,389 - db_handler - INFO - 表 stock_basic 已清空
+2025-09-28 21:42:54,396 - db_handler - INFO - 表 stock_basic 已存在
+2025-09-28 21:42:54,926 - db_handler - INFO - 成功插入 5435 行数据到 stock_basic
+2025-09-28 21:42:56,642 - db_handler - INFO - 数据库连接成功: localhost:3306/tushare_sync
+2025-09-28 21:42:57,193 - db_handler - INFO - 表 daily 已存在
+2025-09-28 21:42:57,554 - db_handler - INFO - 成功插入 5426 行数据到 daily
+2025-09-28 21:42:57,554 - db_handler - INFO - 记录ID: 20250926
+2025-09-28 21:42:58,367 - db_handler - INFO - 表 daily 已存在
+2025-09-28 21:42:58,671 - db_handler - INFO - 成功插入 5426 行数据到 daily
+2025-09-28 21:42:58,671 - db_handler - INFO - 记录ID: 20250925
+2025-09-28 21:42:59,581 - db_handler - INFO - 表 daily 已存在
+2025-09-28 21:42:59,849 - db_handler - INFO - 成功插入 5422 行数据到 daily
+2025-09-28 21:42:59,849 - db_handler - INFO - 记录ID: 20250924

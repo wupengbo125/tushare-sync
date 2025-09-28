@@ -8,11 +8,20 @@ import time
 import tushare as ts
 import pandas as pd
 from datetime import datetime, timedelta
+import warnings
 
 # 添加当前目录到Python路径
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from db_handler import get_db_handler
+
+# Suppress FutureWarning emitted by tushare.pro.data_pro about Series.fillna(method=...)
+# The warning originates inside the third-party package; we filter it here to keep logs clean.
+warnings.filterwarnings(
+    "ignore",
+    category=FutureWarning,
+    module=r"tushare\.pro\.data_pro"
+)
 
 def get_trade_dates(pro, start_date, end_date):
     """获取交易日历"""
