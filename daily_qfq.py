@@ -111,7 +111,7 @@ def sync_daily_qfq(max_workers=2):
                 if max_date:
                     start_date = (pd.to_datetime(str(max_date)) + timedelta(days=1)).strftime('%Y%m%d')
                 else:
-                    start_date = '20100101'
+                    start_date = '20190101'
 
                 if start_date >= tomorrow:
                     print(f"{ts_code} 已是最新，跳过")
@@ -176,7 +176,7 @@ def sync_single_stock(ts_code):
         if max_date:
             start_date = (pd.to_datetime(str(max_date)) + timedelta(days=1)).strftime('%Y%m%d')
         else:
-            start_date = '20100101'
+            start_date = '20190101'
 
         print(f"从 {start_date} 开始同步")
 

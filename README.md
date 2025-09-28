@@ -58,13 +58,13 @@ export MYSQL_DATABASE=tushare_sync
 
 ```bash
 # 股票基本信息（全量同步）
-python sync_stock_basic.py
+python stock_basic.py
 
 # 日线数据（从数据库最新日期+1天开始）
-python sync_daily.py
+python daily.py
 
 # 指定日期范围同步日线数据
-python sync_daily.py range 20240101 20240131
+python daily.py range 20240101 20240131
 
 # 前复权日线数据（从数据库最新日期+1天开始）
 python sync_daily_qfq.py

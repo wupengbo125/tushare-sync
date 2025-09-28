@@ -1,8 +1,8 @@
 #!/bin/bash
+conda activate tushare
 
-python sync_stock_basic.py
+python stock_basic.py
 # python sync_daily.py
-python sync_daily.py range 20250920 20250924
+python daily.py range 20190920 20250924
 
-python sync_stock_hot_rank.py
-python sync_daily_qfq.py
+python daily_qfq.py
