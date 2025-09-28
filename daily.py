@@ -71,7 +71,7 @@ def sync_daily():
             start_date = (pd.to_datetime(str(max_date)) + timedelta(days=1)).strftime('%Y%m%d')
             print(f"数据库最新日期: {max_date}, 从 {start_date} 开始同步")
         else:
-            start_date = '20100101'
+            start_date = '20190101'
             print(f"数据库为空，从 {start_date} 开始同步")
 
         # 获取结束日期

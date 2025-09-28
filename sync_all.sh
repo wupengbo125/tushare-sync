@@ -1,5 +1,4 @@
 #!/bin/bash
-conda activate tushare
 
 python stock_basic.py
 # python sync_daily.py
