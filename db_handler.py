@@ -209,7 +209,7 @@ class DatabaseHandler:
                     logger.warning(f"处理索引 {index_name} 时发生错误: {e}")
 
     def insert_data(self, table_name: str, data: pd.DataFrame, record_id: str = None):
-        """插入数据到数据库"""
+        """插入数据到数据库，自动避免重复"""
         try:
             if data.empty:
                 logger.warning(f"数据为空，跳过插入: {table_name}")
@@ -222,11 +222,49 @@ class DatabaseHandler:
             if not table_known:
                 self.ensure_table_exists(table_name, data)
 
-            # 插入数据
+            # 插入数据，避免重复
             rows_inserted = len(data)
-            data.to_sql(table_name, self.engine, if_exists='append', index=False)
 
-            logger.info(f"成功插入 {rows_inserted} 行数据到 {table_name}")
+            # 对于daily_qfq和daily表，使用INSERT IGNORE避免重复数据
+            if table_name in ['daily_qfq', 'daily']:
+                # 先创建临时表
+                temp_table = f"temp_{table_name}_{int(datetime.now().timestamp())}"
+                data.to_sql(temp_table, self.engine, if_exists='replace', index=False)
+
+                # 使用INSERT IGNORE插入数据，利用唯一约束避免重复
+                with self.engine.connect() as conn:
+                    # 确保有唯一约束
+                    try:
+                        conn.execute(text(f"""
+                            ALTER TABLE {table_name}
+                            ADD UNIQUE KEY uniq_ts_trade_date (ts_code(20), trade_date(20))
+                        """))
+                        conn.commit()
+                        logger.info(f"添加唯一约束到表 {table_name}")
+                    except Exception as e:
+                        # 约束可能已存在，忽略错误
+                        logger.debug(f"添加唯一约束失败（可能已存在）: {e}")
+
+                    # 使用INSERT IGNORE插入
+                    insert_sql = f"""
+                        INSERT IGNORE INTO {table_name}
+                        SELECT * FROM {temp_table}
+                    """
+                    result = conn.execute(text(insert_sql))
+                    conn.commit()
+                    rows_affected = result.rowcount
+
+                    # 删除临时表
+                    conn.execute(text(f"DROP TABLE {temp_table}"))
+                    conn.commit()
+
+                    logger.info(f"成功插入 {rows_affected} 行数据到 {table_name}（跳过重复数据）")
+            else:
+                # 其他表使用原有逻辑
+                data.to_sql(table_name, self.engine, if_exists='append', index=False)
+                rows_affected = rows_inserted
+                logger.info(f"成功插入 {rows_inserted} 行数据到 {table_name}")
+
             if record_id:
                 logger.info(f"记录ID: {record_id}")
 
