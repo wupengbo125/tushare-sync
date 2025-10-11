@@ -114,8 +114,8 @@ def sync_daily_qfq(max_workers=16):
         # 同步数据
         total_records = 0
         success_count = 0
-        skipped_count = 0
-        
+        processed_count = 0
+
         # 检查表是否存在，如果存在就删除
         try:
             inspector = inspect(db_handler.get_engine())
@@ -136,15 +136,10 @@ def sync_daily_qfq(max_workers=16):
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # 提交任务 - 移除重复数据检查，直接从2019年开始同步
             future_to_stock = {}
-            
+
             for ts_code in stock_codes:
                 # 直接从2019年开始同步，不检查数据库中的最大日期
                 start_date = '20190101'
-
-                if start_date >= tomorrow:
-                    print(f"{ts_code} 已是最新，跳过")
-                    skipped_count += 1
-                    continue
 
                 future = executor.submit(get_qfq_data, ts_code, start_date)
                 future_to_stock[future] = ts_code
@@ -152,26 +147,39 @@ def sync_daily_qfq(max_workers=16):
             print(f"提交了 {len(future_to_stock)} 个任务")
 
             # 处理结果
+            first_batch = True
             for future in as_completed(future_to_stock):
                 ts_code = future_to_stock[future]
                 try:
                     df = future.result()
                     if not df.empty:
-                        success = db_handler.insert_data('daily_qfq', df, ts_code)
-                        if success:
-                            total_records += len(df)
-                            success_count += 1
-                            print(f"{ts_code} 同步完成，{len(df)} 条记录")
+                        # 使用简单的 to_sql 方法，不需要重复数据处理
+                        if first_batch:
+                            # 第一个批次创建表，后续批次追加数据
+                            df.to_sql('daily_qfq', db_handler.get_engine(), if_exists='replace', index=False)
+                            first_batch = False
+                            # 创建索引
+                            db_handler._create_indexes('daily_qfq', df.columns.tolist())
+                            print(f"创建 daily_qfq 表及索引并插入第一批数据")
                         else:
-                            print(f"{ts_code} 插入失败")
+                            df.to_sql('daily_qfq', db_handler.get_engine(), if_exists='append', index=False)
+
+                        total_records += len(df)
+                        success_count += 1
+                        print(f"{ts_code} 同步完成，{len(df)} 条记录")
                     else:
-                        print(f"{ts_code} 无新数据")
+                        print(f"{ts_code} 无数据")
                 except Exception as e:
                     print(f"{ts_code} 处理失败: {e}")
 
+                processed_count += 1
+                # 显示进度百分比
+                percentage = (processed_count / len(future_to_stock)) * 100
+                print(f"进度: {processed_count}/{len(future_to_stock)} ({percentage:.1f}%)")
+
         print(f"前复权数据同步完成:")
         print(f"  成功: {success_count} 只")
-        print(f"  跳过: {skipped_count} 只")
+        print(f"  失败: {len(future_to_stock) - success_count} 只")
         print(f"  总记录: {total_records} 条")
 
         return True
