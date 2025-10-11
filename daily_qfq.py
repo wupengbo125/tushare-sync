@@ -9,6 +9,7 @@ import tushare as ts
 import pandas as pd
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from sqlalchemy import inspect, text
 import warnings
 
 # 添加当前目录到Python路径
@@ -77,7 +78,7 @@ def get_qfq_data(ts_code, start_date, max_retries=3):
                 print(f"获取 {ts_code} 数据失败: {e}")
     return pd.DataFrame()
 
-def sync_daily_qfq(max_workers=2):
+def sync_daily_qfq(max_workers=16):
     """同步前复权日线数据"""
     print("=" * 50)
     print("同步前复权日线数据")
@@ -114,42 +115,31 @@ def sync_daily_qfq(max_workers=2):
         total_records = 0
         success_count = 0
         skipped_count = 0
+        
+        # 检查表是否存在，如果存在就删除
+        try:
+            inspector = inspect(db_handler.get_engine())
+            if inspector.has_table('daily_qfq'):
+                print("发现已存在的 daily_qfq 表，正在删除...")
+                with db_handler.get_engine().connect() as conn:
+                    conn.execute(text('DROP TABLE daily_qfq'))
+                    conn.commit()
+                print("已删除 daily_qfq 表")
+                # 清除 db_handler 中的表缓存，确保后续能重新创建表
+                with db_handler._table_lock:
+                    if 'daily_qfq' in db_handler._existing_tables:
+                        db_handler._existing_tables.remove('daily_qfq')
+                print("已清除 daily_qfq 表缓存")
+        except Exception as e:
+            print(f"删除表失败: {e}")
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # 提交任务
+            # 提交任务 - 移除重复数据检查，直接从2019年开始同步
             future_to_stock = {}
-            # 预取每只股票在 daily_qfq 表中的最大日期，避免在循环中反复查询
-            per_stock_max = {}
-            try:
-                # 为查询安全地构造 IN 列表（对单引号进行转义）
-                codes_sql = ",".join([f"'{c.replace("'", "''")}'" for c in stock_codes])
-                query = f"SELECT ts_code, MAX(trade_date) as max_date FROM daily_qfq WHERE ts_code IN ({codes_sql}) GROUP BY ts_code"
-                df_max = pd.read_sql(query, con=db_handler.get_engine())
-                if not df_max.empty and 'ts_code' in df_max.columns:
-                    for _, row in df_max.iterrows():
-                        per_stock_max[str(row['ts_code'])] = row['max_date']
-                    print(f"已预取 {len(per_stock_max)} 只股票的最大日期")
-            except Exception as e:
-                # 如果表不存在或查询失败，per_stock_max 保持为空，后续回退到默认起始日期
-                print(f"未能预取每只股票的最大日期（表可能不存在），将使用全表最大日期或默认起始日期: {e}")
-
-            # 如果无法按股票预取，尝试使用表级的最大日期作为退路（保持原有行为）
-            table_max_date = None
-            if not per_stock_max:
-                try:
-                    table_max_date = db_handler.get_max_date('daily_qfq')
-                except Exception:
-                    table_max_date = None
-
+            
             for ts_code in stock_codes:
-                # 获取该股票的最新日期（优先使用按股票的最大值）
-                max_date = per_stock_max.get(ts_code)
-                if max_date:
-                    start_date = (pd.to_datetime(str(max_date)) + timedelta(days=1)).strftime('%Y%m%d')
-                elif table_max_date:
-                    start_date = (pd.to_datetime(str(table_max_date)) + timedelta(days=1)).strftime('%Y%m%d')
-                else:
-                    start_date = '20190101'
+                # 直接从2019年开始同步，不检查数据库中的最大日期
+                start_date = '20190101'
 
                 if start_date >= tomorrow:
                     print(f"{ts_code} 已是最新，跳过")
