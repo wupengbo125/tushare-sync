@@ -33,8 +33,9 @@ class DatabaseHandler:
         """初始化数据库连接"""
         self.host = host or os.getenv('MYSQL_HOST', 'localhost')
         self.port = port or int(os.getenv('MYSQL_PORT', 3306))
-        self.user = user or os.getenv('username', 'root')
-        self.password = password or os.getenv('password', '')
+        # 使用root用户连接数据库
+        self.user = 'root'
+        self.password = password or os.getenv('MYSQL_ROOT_PASSWORD') or os.getenv('MYSQL_PASSWORD', '')
         self.database = database or os.getenv('MYSQL_DATABASE', 'tushare_sync')
 
         self.engine = None
