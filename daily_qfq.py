@@ -78,6 +78,33 @@ def get_qfq_data(ts_code, start_date, max_retries=3):
                 print(f"获取 {ts_code} 数据失败: {e}")
     return pd.DataFrame()
 
+def need_sync_daily_qfq(db_handler, pro):
+    """检查是否需要同步daily_qfq数据"""
+    try:
+        # 获取最新交易日和总股票数
+        latest_trade_date = get_latest_trade_date(pro)
+        stock_codes = get_stock_codes(db_handler)
+        total_stocks = len(stock_codes)
+
+        # 检查最新交易日的数据量
+        query = f"SELECT COUNT(DISTINCT ts_code) as count FROM daily_qfq WHERE trade_date = '{latest_trade_date}'"
+        result = pd.read_sql(query, con=db_handler.get_engine())
+        latest_count = result.iloc[0]['count']
+
+        # 如果数据量小于总股票数的90%，认为数据不完整，需要同步
+        completeness_ratio = latest_count / total_stocks if total_stocks > 0 else 0
+
+        if completeness_ratio >= 0.9:
+            print(f"数据完整性检查通过: {latest_count}/{total_stocks} ({completeness_ratio:.1%})")
+            return False  # 不需要同步
+        else:
+            print(f"数据不完整: {latest_count}/{total_stocks} ({completeness_ratio:.1%}), 需要重新同步")
+            return True  # 需要同步
+
+    except Exception as e:
+        print(f"检查是否需要同步失败: {e}")
+        return True  # 出错时默认需要同步
+
 def sync_daily_qfq(max_workers=16):
     """同步前复权日线数据"""
     print("=" * 50)
@@ -115,6 +142,11 @@ def sync_daily_qfq(max_workers=16):
         total_records = 0
         success_count = 0
         processed_count = 0
+
+        # 检查是否需要同步（如果已有最新交易日数据则跳过）
+        if not need_sync_daily_qfq(db_handler, pro):
+            print("daily_qfq数据已是最新，跳过同步")
+            return True
 
         # 检查表是否存在，如果存在就删除
         try:
