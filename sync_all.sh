@@ -8,6 +8,6 @@ fi
 cd "$SCRIPT_DIR"
 python stock_basic.py
 
-#python daily.py range
-#python daily_qfq.py workers 2
-#python check_daily_qfq.py
+python daily.py range
+python daily_qfq.py workers 2
+python check_daily_qfq.py
