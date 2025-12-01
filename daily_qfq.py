@@ -143,6 +143,11 @@ def sync_daily_qfq(max_workers=16, target_table='daily_qfq_new'):
         success_count = 0
         processed_count = 0
 
+        # 检查是否需要同步（如果已有最新交易日数据则跳过）
+        if not need_sync_daily_qfq(db_handler, pro):
+            print("daily_qfq数据已是最新，跳过同步")
+            return True
+
         # 不再删除旧表，直接同步到新表 daily_qfq_new
         print(f"同步数据到新表: {target_table}")
 
