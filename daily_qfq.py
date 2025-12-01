@@ -105,10 +105,10 @@ def need_sync_daily_qfq(db_handler, pro):
         print(f"检查是否需要同步失败: {e}")
         return True  # 出错时默认需要同步
 
-def sync_daily_qfq(max_workers=16, target_table='daily_qfq_new'):
+def sync_daily_qfq(max_workers=16):
     """同步前复权日线数据"""
     print("=" * 50)
-    print(f"同步前复权日线数据到表: {target_table}")
+    print("同步前复权日线数据")
     print("=" * 50)
 
     try:
@@ -148,8 +148,22 @@ def sync_daily_qfq(max_workers=16, target_table='daily_qfq_new'):
             print("daily_qfq数据已是最新，跳过同步")
             return True
 
-        # 不再删除旧表，直接同步到新表 daily_qfq_new
-        print(f"同步数据到新表: {target_table}")
+        # 检查表是否存在，如果存在就删除
+        try:
+            inspector = inspect(db_handler.get_engine())
+            if inspector.has_table('daily_qfq'):
+                print("发现已存在的 daily_qfq 表，正在删除...")
+                with db_handler.get_engine().connect() as conn:
+                    conn.execute(text('DROP TABLE daily_qfq'))
+                    conn.commit()
+                print("已删除 daily_qfq 表")
+                # 清除 db_handler 中的表缓存，确保后续能重新创建表
+                with db_handler._table_lock:
+                    if 'daily_qfq' in db_handler._existing_tables:
+                        db_handler._existing_tables.remove('daily_qfq')
+                print("已清除 daily_qfq 表缓存")
+        except Exception as e:
+            print(f"删除表失败: {e}")
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             # 提交任务 - 移除重复数据检查，直接从2019年开始同步
@@ -174,13 +188,13 @@ def sync_daily_qfq(max_workers=16, target_table='daily_qfq_new'):
                         # 使用简单的 to_sql 方法，不需要重复数据处理
                         if first_batch:
                             # 第一个批次创建表，后续批次追加数据
-                            df.to_sql(target_table, db_handler.get_engine(), if_exists='replace', index=False)
+                            df.to_sql('daily_qfq', db_handler.get_engine(), if_exists='replace', index=False)
                             first_batch = False
                             # 创建索引
-                            db_handler._create_indexes(target_table, df.columns.tolist())
-                            print(f"创建 {target_table} 表及索引并插入第一批数据")
+                            db_handler._create_indexes('daily_qfq', df.columns.tolist())
+                            print(f"创建 daily_qfq 表及索引并插入第一批数据")
                         else:
-                            df.to_sql(target_table, db_handler.get_engine(), if_exists='append', index=False)
+                            df.to_sql('daily_qfq', db_handler.get_engine(), if_exists='append', index=False)
 
                         total_records += len(df)
                         success_count += 1
@@ -226,7 +240,7 @@ def sync_single_stock(ts_code):
         ts.set_token(token)
 
         # 获取起始日期
-        max_date = db_handler.get_max_date('daily_qfq_new')
+        max_date = db_handler.get_max_date('daily_qfq')
         if max_date:
             start_date = (pd.to_datetime(str(max_date)) + timedelta(days=1)).strftime('%Y%m%d')
         else:
@@ -241,7 +255,7 @@ def sync_single_stock(ts_code):
             return True
 
         # 插入数据库
-        success = db_handler.insert_data('daily_qfq_new', df, ts_code)
+        success = db_handler.insert_data('daily_qfq', df, ts_code)
         if success:
             print(f"{ts_code} 同步完成，{len(df)} 条记录")
             return True
@@ -262,15 +276,6 @@ if __name__ == "__main__":
             # 指定线程数
             max_workers = int(sys.argv[2])
             success = sync_daily_qfq(max_workers)
-        elif len(sys.argv) == 3 and sys.argv[1] == "table":
-            # 指定目标表
-            target_table = sys.argv[2]
-            success = sync_daily_qfq(target_table=target_table)
-        elif len(sys.argv) == 5 and sys.argv[1] == "workers" and sys.argv[3] == "table":
-            # 指定线程数和目标表
-            max_workers = int(sys.argv[2])
-            target_table = sys.argv[4]
-            success = sync_daily_qfq(max_workers, target_table)
         else:
             # 默认同步
             success = sync_daily_qfq()
