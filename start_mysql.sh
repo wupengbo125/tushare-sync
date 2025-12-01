@@ -5,14 +5,44 @@
 
 set -e
 
-# 设置默认值
-CONTAINER_NAME="tushare-mysql"
-MYSQL_PORT=3306
-MYSQL_ROOT_PASSWORD="root123"
-MYSQL_DATABASE="tushare_sync"
-MYSQL_USER=${username:-"alpha_user"}
-MYSQL_PASSWORD=${password:-"alpha_pass"}
-DATA_DIR="$PWD/mysql_data"
+# 从环境变量获取配置，设置合理的默认值
+CONTAINER_NAME="${MYSQL_CONTAINER_NAME:-tushare-mysql}"
+MYSQL_PORT="${MYSQL_PORT:-3306}"
+MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-${MYSQL_PASSWORD}}"
+MYSQL_DATABASE="${MYSQL_DATABASE:-tushare_sync}"
+MYSQL_USER="${MYSQL_USER:-tushare_user}"
+MYSQL_PASSWORD="${MYSQL_PASSWORD:-tushare_password}"
+MYSQL_HOST="${MYSQL_HOST:-localhost}"
+DATA_DIR="${MYSQL_DATA_DIR:-$PWD/mysql_data}"
+
+# 检查MYSQL_USER是否设置为root，如果是则给出警告并重置为默认值
+if [ "$MYSQL_USER" = "root" ]; then
+    echo -e "${YELLOW}警告: MYSQL_USER不能设置为root${NC}"
+    echo -e "${YELLOW}MySQL Docker镜像中，root用户必须使用MYSQL_ROOT_PASSWORD配置${NC}"
+    MYSQL_USER="tushare_user"
+    echo -e "${YELLOW}已重置MYSQL_USER为默认值: ${MYSQL_USER}${NC}"
+fi
+
+# 检查必需的环境变量是否设置
+if [ -z "$MYSQL_PASSWORD" ] || [ -z "$MYSQL_DATABASE" ]; then
+    echo -e "${RED}错误: 请设置所有必需的环境变量${NC}"
+    echo -e "${YELLOW}必需的环境变量:${NC}"
+    echo "  MYSQL_PASSWORD - MySQL密码（用于root用户和普通用户）"
+    echo "  MYSQL_DATABASE - 数据库名称"
+    echo ""
+    echo -e "${YELLOW}示例:${NC}"
+    echo "  export MYSQL_PASSWORD=root123"
+    echo "  export MYSQL_DATABASE=tushare_sync"
+    echo ""
+    echo -e "${YELLOW}可选环境变量:${NC}"
+    echo "  MYSQL_PORT - MySQL端口 (默认: 3306)"
+    echo "  MYSQL_USER - 普通用户名 (默认: tushare_user)"
+    echo "  MYSQL_ROOT_PASSWORD - Root密码 (默认: 与MYSQL_PASSWORD相同)"
+    echo "  MYSQL_HOST - 主机地址 (默认: localhost)"
+    echo "  MYSQL_CONTAINER_NAME - 容器名称 (默认: tushare-mysql)"
+    echo "  MYSQL_DATA_DIR - 数据目录 (默认: $PWD/mysql_data)"
+    exit 1
+fi
 
 # 彩色输出
 RED='\033[0;31m'
@@ -72,7 +102,7 @@ else
         -e MYSQL_PASSWORD="${MYSQL_PASSWORD}" \
         -v "${DATA_DIR}:/var/lib/mysql" \
         --restart unless-stopped \
-        mysql:8.0 \
+        docker.1ms.run/library/mysql:8.0 \
         --character-set-server=utf8mb4 \
         --collation-server=utf8mb4_unicode_ci \
         --default-time-zone='+8:00'
@@ -96,18 +126,18 @@ done
 echo -e "${GREEN}===========================================${NC}"
 echo -e "${GREEN}          MySQL 连接信息${NC}"
 echo -e "${GREEN}===========================================${NC}"
-echo -e "主机: ${YELLOW}localhost${NC}"
+echo -e "主机: ${YELLOW}${MYSQL_HOST}${NC}"
 echo -e "端口: ${YELLOW}${MYSQL_PORT}${NC}"
 echo -e "数据库: ${YELLOW}${MYSQL_DATABASE}${NC}"
 echo -e "用户名: ${YELLOW}${MYSQL_USER}${NC}"
-echo -e "密码: ${YELLOW}${MYSQL_PASSWORD}${NC}"
-echo -e "Root密码: ${YELLOW}${MYSQL_ROOT_PASSWORD}${NC}"
+echo -e "密码: ${YELLOW}********${NC}"
+echo -e "Root密码: ${YELLOW}********${NC}"
 echo ""
 echo -e "${GREEN}环境变量设置:${NC}"
-echo -e "export MYSQL_HOST=localhost"
+echo -e "export MYSQL_HOST=${MYSQL_HOST}"
 echo -e "export MYSQL_PORT=${MYSQL_PORT}"
-echo -e "export username=${MYSQL_USER}"
-echo -e "export password=${MYSQL_PASSWORD}"
+echo -e "export MYSQL_USER=${MYSQL_USER}"
+echo -e "export MYSQL_PASSWORD=********"
 echo -e "export MYSQL_DATABASE=${MYSQL_DATABASE}"
 echo ""
 echo -e "${YELLOW}常用命令:${NC}"

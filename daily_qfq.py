@@ -78,6 +78,33 @@ def get_qfq_data(ts_code, start_date, max_retries=3):
                 print(f"获取 {ts_code} 数据失败: {e}")
     return pd.DataFrame()
 
+def need_sync_daily_qfq(db_handler, pro):
+    """检查是否需要同步daily_qfq数据"""
+    try:
+        # 获取最新交易日和总股票数
+        latest_trade_date = get_latest_trade_date(pro)
+        stock_codes = get_stock_codes(db_handler)
+        total_stocks = len(stock_codes)
+
+        # 检查最新交易日的数据量
+        query = f"SELECT COUNT(DISTINCT ts_code) as count FROM daily_qfq WHERE trade_date = '{latest_trade_date}'"
+        result = pd.read_sql(query, con=db_handler.get_engine())
+        latest_count = result.iloc[0]['count']
+
+        # 如果数据量小于总股票数的90%，认为数据不完整，需要同步
+        completeness_ratio = latest_count / total_stocks if total_stocks > 0 else 0
+
+        if completeness_ratio >= 0.9:
+            print(f"数据完整性检查通过: {latest_count}/{total_stocks} ({completeness_ratio:.1%})")
+            return False  # 不需要同步
+        else:
+            print(f"数据不完整: {latest_count}/{total_stocks} ({completeness_ratio:.1%}), 需要重新同步")
+            return True  # 需要同步
+
+    except Exception as e:
+        print(f"检查是否需要同步失败: {e}")
+        return True  # 出错时默认需要同步
+
 def sync_daily_qfq(max_workers=16, target_table='daily_qfq_new'):
     """同步前复权日线数据"""
     print("=" * 50)
@@ -117,7 +144,6 @@ def sync_daily_qfq(max_workers=16, target_table='daily_qfq_new'):
         processed_count = 0
 
         # 不再删除旧表，直接同步到新表 daily_qfq_new
-        target_table = 'daily_qfq_new'
         print(f"同步数据到新表: {target_table}")
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -195,7 +221,7 @@ def sync_single_stock(ts_code):
         ts.set_token(token)
 
         # 获取起始日期
-        max_date = db_handler.get_max_date(target_table)
+        max_date = db_handler.get_max_date('daily_qfq_new')
         if max_date:
             start_date = (pd.to_datetime(str(max_date)) + timedelta(days=1)).strftime('%Y%m%d')
         else:
@@ -210,7 +236,7 @@ def sync_single_stock(ts_code):
             return True
 
         # 插入数据库
-        success = db_handler.insert_data(target_table, df, ts_code)
+        success = db_handler.insert_data('daily_qfq_new', df, ts_code)
         if success:
             print(f"{ts_code} 同步完成，{len(df)} 条记录")
             return True
