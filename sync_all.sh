@@ -11,5 +11,5 @@ python filter_stock_basic.py
 
 python daily.py range
 python daily_qfq.py workers 8
-python apply_qfq-new.py
+python apply-qfq-new.py
 python check_daily_qfq.py
