@@ -162,8 +162,14 @@ class DatabaseHandler:
             ]
         }
 
-        if table_name in index_definitions:
-            for index_def in index_definitions[table_name]:
+        definition_table = table_name
+        if definition_table not in index_definitions and definition_table.endswith('_new'):
+            candidate = definition_table[:-4]
+            if candidate in index_definitions:
+                definition_table = candidate
+
+        if definition_table in index_definitions:
+            for index_def in index_definitions[definition_table]:
                 index_name = index_def[0]
                 index_type = index_def[1]
 
@@ -180,17 +186,20 @@ class DatabaseHandler:
                         if index_name_full not in existing_indexes:
                             if '(' in index_type:
                                 # 复合索引
-                                if table_name in ['daily', 'daily_qfq'] and 'ts_code' in index_type:
+                                if definition_table in ['daily', 'daily_qfq'] and 'ts_code' in index_type:
                                     # TEXT字段需要指定索引长度
                                     index_sql = f"CREATE INDEX {index_name_full} ON {table_name} (ts_code(20), trade_date(20))"
                                 else:
-                                    index_sql = f"CREATE INDEX {index_name_full} ON {table_name} {index_type.split('(', 1)[1]}"
+                                    columns_part = index_type.split('(', 1)[1]
+                                    if not columns_part.startswith('('):
+                                        columns_part = f"({columns_part}"
+                                    index_sql = f"CREATE INDEX {index_name_full} ON {table_name} {columns_part}"
                             else:
                                 # 单列索引
                                 if table_name == 'stock_basic' and index_name in ['symbol', 'industry', 'area']:
                                     # TEXT字段需要指定索引长度
                                     index_sql = f"CREATE INDEX {index_name_full} ON {table_name} ({index_name}(50))"
-                                elif table_name in ['daily', 'daily_qfq'] and index_name in ['ts_code', 'trade_date']:
+                                elif definition_table in ['daily', 'daily_qfq'] and index_name in ['ts_code', 'trade_date']:
                                     # TEXT字段需要指定索引长度
                                     index_sql = f"CREATE INDEX {index_name_full} ON {table_name} ({index_name}(20))"
                                 else:

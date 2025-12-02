@@ -5,3 +5,4 @@ cryptography>=3.4.8
 aiohttp>=3.11.13
 akshare>=1.17.56
 pymysql>=1.0.3
+tqdm>=4.66.0
