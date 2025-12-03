@@ -25,6 +25,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+UPSERT_TABLE_CONFIG = {
+    'daily': {
+        'unique_key': 'uniq_ts_trade_date',
+        'columns': [('ts_code', 20), ('trade_date', 20)],
+    },
+    'daily_qfq': {
+        'unique_key': 'uniq_ts_trade_date',
+        'columns': [('ts_code', 20), ('trade_date', 20)],
+    },
+    'ths_concept_index_daily': {
+        'unique_key': 'uniq_concept_trade_date',
+        'columns': [('concept_code', 40), ('trade_date', 20)],
+    },
+    # ths_concept_list 不需要临时表 UPSERT，整表重建
+}
+
 class DatabaseHandler:
     """数据库处理器"""
 
@@ -154,6 +170,15 @@ class DatabaseHandler:
                 ('trade_date', 'INDEX'),
                 ('ts_code_trade_date', 'INDEX (ts_code, trade_date)'),
             ],
+            'ths_concept_index_daily': [
+                ('concept_code', 'INDEX'),
+                ('trade_date', 'INDEX'),
+                ('concept_code_trade_date', 'INDEX (concept_code, trade_date)'),
+            ],
+            'ths_concept_list': [
+                ('concept_code', 'INDEX'),
+                ('concept_name', 'INDEX'),
+            ],
             'stock_hot_rank': [
                 ('stock_code', 'INDEX'),
                 ('record_date', 'INDEX'),
@@ -189,6 +214,8 @@ class DatabaseHandler:
                                 if definition_table in ['daily', 'daily_qfq'] and 'ts_code' in index_type:
                                     # TEXT字段需要指定索引长度
                                     index_sql = f"CREATE INDEX {index_name_full} ON {table_name} (ts_code(20), trade_date(20))"
+                                elif definition_table == 'ths_concept_index_daily' and 'concept_code' in index_type:
+                                    index_sql = f"CREATE INDEX {index_name_full} ON {table_name} (concept_code(40), trade_date(20))"
                                 else:
                                     columns_part = index_type.split('(', 1)[1]
                                     if not columns_part.startswith('('):
@@ -201,6 +228,14 @@ class DatabaseHandler:
                                     index_sql = f"CREATE INDEX {index_name_full} ON {table_name} ({index_name}(50))"
                                 elif definition_table in ['daily', 'daily_qfq'] and index_name in ['ts_code', 'trade_date']:
                                     # TEXT字段需要指定索引长度
+                                    index_sql = f"CREATE INDEX {index_name_full} ON {table_name} ({index_name}(20))"
+                                elif definition_table == 'ths_concept_list' and index_name == 'concept_code':
+                                    index_sql = f"CREATE INDEX {index_name_full} ON {table_name} ({index_name}(40))"
+                                elif definition_table == 'ths_concept_list' and index_name == 'concept_name':
+                                    index_sql = f"CREATE INDEX {index_name_full} ON {table_name} ({index_name}(100))"
+                                elif definition_table == 'ths_concept_index_daily' and index_name == 'concept_code':
+                                    index_sql = f"CREATE INDEX {index_name_full} ON {table_name} ({index_name}(40))"
+                                elif definition_table == 'ths_concept_index_daily' and index_name == 'trade_date':
                                     index_sql = f"CREATE INDEX {index_name_full} ON {table_name} ({index_name}(20))"
                                 else:
                                     index_sql = f"CREATE INDEX {index_name_full} ON {table_name} ({index_name})"
@@ -236,7 +271,8 @@ class DatabaseHandler:
             rows_inserted = len(data)
 
             # 对于daily_qfq和daily表，使用INSERT IGNORE避免重复数据
-            if table_name in ['daily_qfq', 'daily']:
+            if table_name in UPSERT_TABLE_CONFIG:
+                table_config = UPSERT_TABLE_CONFIG[table_name]
                 # 先创建临时表
                 temp_table = f"temp_{table_name}_{int(datetime.now().timestamp())}"
                 data.to_sql(temp_table, self.engine, if_exists='replace', index=False)
@@ -245,9 +281,13 @@ class DatabaseHandler:
                 with self.engine.connect() as conn:
                     # 确保有唯一约束
                     try:
+                        unique_columns = ", ".join(
+                            f"{col}({length})" if length else col
+                            for col, length in table_config['columns']
+                        )
                         conn.execute(text(f"""
                             ALTER TABLE {table_name}
-                            ADD UNIQUE KEY uniq_ts_trade_date (ts_code(20), trade_date(20))
+                            ADD UNIQUE KEY {table_config['unique_key']} ({unique_columns})
                         """))
                         conn.commit()
                         logger.info(f"添加唯一约束到表 {table_name}")

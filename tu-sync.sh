@@ -7,7 +7,7 @@ fi
 
 cd "$SCRIPT_DIR"
 python stock_basic.py
-python filter_stock_basic.py
+python filter_stock_basic.py #过滤掉688，920，ST
 
 python daily.py range
 python daily_qfq.py workers 8
