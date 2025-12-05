@@ -13,8 +13,6 @@ from db_handler import get_db_handler  # noqa: E402
 
 CONCEPT_TABLE = os.getenv("THS_CONCEPT_TABLE", "ths_concept_index_daily")
 CONCEPT_TABLE_NEW = os.getenv("THS_CONCEPT_TABLE_NEW", f"{CONCEPT_TABLE}_new")
-CONCEPT_META_TABLE = os.getenv("THS_CONCEPT_META_TABLE", "ths_concept_list")
-CONCEPT_META_TABLE_NEW = os.getenv("THS_CONCEPT_META_TABLE_NEW", f"{CONCEPT_META_TABLE}_new")
 
 
 def rename_table(engine, old_name: str, new_name: str) -> bool:
@@ -47,14 +45,12 @@ def apply_concept_tables():
         db_handler = get_db_handler()
         engine = db_handler.get_engine()
         ok_daily = rename_table(engine, CONCEPT_TABLE_NEW, CONCEPT_TABLE)
-        ok_meta = rename_table(engine, CONCEPT_META_TABLE_NEW, CONCEPT_META_TABLE)
-
-        if not (ok_daily and ok_meta):
-            print("部分表替换失败，请检查日志")
+        if not ok_daily:
+            print("概念日线表替换失败，请检查日志")
             return False
 
         with db_handler._table_lock:  # noqa: SLF001
-            for name in (CONCEPT_TABLE, CONCEPT_TABLE_NEW, CONCEPT_META_TABLE, CONCEPT_META_TABLE_NEW):
+            for name in (CONCEPT_TABLE, CONCEPT_TABLE_NEW):
                 db_handler._existing_tables.discard(name)  # noqa: SLF001
 
         print("概念数据表替换完成")

@@ -31,6 +31,7 @@ RETRY_BACKOFF_SECONDS = float(os.getenv("THS_CONCEPT_RETRY_BACKOFF", "15"))
 REQUEST_INTERVAL_SECONDS = float(os.getenv("THS_CONCEPT_REQUEST_INTERVAL", "0"))
 DEFAULT_WORKERS = max(1, int(os.getenv("THS_CONCEPT_WORKERS", "10")))
 FAILED_OUTPUT_PATH = os.getenv("THS_CONCEPT_FAILED_FILE", "failed_concepts.txt")
+SKIP_NAMES_FILE = os.getenv("THS_CONCEPT_SKIP_FILE", "ljg.txt")
 CONCEPT_NAME_FILTER = [
     name.strip() for name in os.getenv("THS_CONCEPT_NAME_FILTER", "").split(",") if name.strip()
 ]
@@ -214,6 +215,18 @@ def write_failed_concepts(failed_list: List[Tuple[str, str]], file_path: str):
         print(f"写入失败列表文件出错: {exc}")
 
 
+def load_skip_names(file_path: str) -> List[str]:
+    """读取需要跳过的概念名称."""
+    if not file_path:
+        return []
+    if not os.path.isfile(file_path):
+        return []
+    names = read_concept_names_from_file(file_path)
+    if names:
+        print(f"将跳过 {len(names)} 个概念（来自 {file_path}）")
+    return names
+
+
 def sync_concepts(max_workers: int = DEFAULT_WORKERS, concept_file: Optional[str] = None):
     """主流程入口."""
     start_date = normalize_ymd(START_DATE)
@@ -241,6 +254,8 @@ def sync_concepts(max_workers: int = DEFAULT_WORKERS, concept_file: Optional[str
     else:
         filters = None
 
+    skip_names = set(load_skip_names(SKIP_NAMES_FILE))
+
     concepts = load_concepts_from_db(CONCEPT_META_TABLE, filters, db_handler)
     meta_table_used = CONCEPT_META_TABLE
     if not concepts:
@@ -252,8 +267,18 @@ def sync_concepts(max_workers: int = DEFAULT_WORKERS, concept_file: Optional[str
     if not concepts:
         print("数据库中未找到任何概念数据，请先运行 sync_ths_concept_list.py 并应用。")
         return False
-    else:
-        print(f"概念来源表: {meta_table_used}（共 {len(concepts)} 个概念）")
+
+    if skip_names:
+        before = len(concepts)
+        concepts = [concept for concept in concepts if concept["concept_name"] not in skip_names]
+        skipped_count = before - len(concepts)
+        if skipped_count > 0:
+            print(f"跳过 {skipped_count} 个概念（配置文件: {SKIP_NAMES_FILE}）")
+        if not concepts:
+            print("所有概念均在跳过列表中，无需同步。")
+            return True
+
+    print(f"概念来源表: {meta_table_used}（共 {len(concepts)} 个概念）")
 
     engine = db_handler.get_engine()
     inspector = inspect(engine)
