@@ -7,9 +7,7 @@ import os
 import sys
 import logging
 import threading
-from typing import Optional, Dict, Any
 from sqlalchemy import create_engine, text, inspect
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.engine import Engine
 import pandas as pd
 from datetime import datetime
