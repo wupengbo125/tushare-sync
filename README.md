@@ -92,8 +92,7 @@ python daily_qfq.py
 # 单个股票前复权数据
 python daily_qfq.py 000001.SZ
 
-# 检查前复权数据完整性
-python check_daily_qfq.py
+
 ```
 
 #### 2.2 时间控制说明
