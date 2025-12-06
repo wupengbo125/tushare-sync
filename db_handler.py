@@ -50,7 +50,7 @@ class DatabaseHandler:
         self.host = host or 'localhost'
         self.port = port or 3306
         # 使用root用户连接数据库
-        self.user = 'root'
+        self.user = os.getenv('MYSQL_USER') or user or 'root'
         self.password = password or os.getenv('MYSQL_ROOT_PASSWORD') or os.getenv('MYSQL_PASSWORD') or ''
         self.database = database or 'tushare_sync'
 
