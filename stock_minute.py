@@ -5,27 +5,26 @@
 import os
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 import adata
 import pandas as pd
 import requests
-from sqlalchemy import text
+from sqlalchemy import inspect
 from tqdm import tqdm
 
 # 添加当前目录到 Python 路径
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from db_handler import get_db_handler  # noqa: E402
 
-DEFAULT_WORKERS = 1
 MAX_RETRIES = 3
 DEFAULT_PERIOD = 30
 VALID_PERIODS = {1, 5, 15, 30, 60}
 START_OFFSET_DAYS = 30
 ADJUST_TYPE = 1
 DATA_SOURCE = "adata_east"
+FAILED_FILE = "failed_stock_minute.txt"
 
 
 def get_table_names(period: int) -> Tuple[str, str]:
@@ -43,21 +42,18 @@ def ts_code_to_stock_code(ts_code: str) -> Optional[str]:
     return code
 
 
-def load_stock_codes(db_handler, filter_code: Optional[str] = None) -> List[str]:
+def load_stock_codes(db_handler) -> List[str]:
     """从 stock_basic 读取 ts_code 列表."""
     try:
         query = "SELECT ts_code FROM stock_basic"
         df = pd.read_sql(query, con=db_handler.get_engine())
-        codes = df["ts_code"].dropna().tolist()
-        if filter_code:
-            codes = [code for code in codes if code == filter_code]
-        return codes
+        return df["ts_code"].dropna().tolist()
     except Exception as exc:  # pylint: disable=broad-except
         print(f"读取股票列表失败: {exc}")
         return []
 
 
-def calculate_time_range(ts_filter: Optional[str] = None) -> Tuple[datetime, datetime]:
+def calculate_time_range() -> Tuple[datetime, datetime]:
     """计算起止时间."""
     now = datetime.now()
     base = now.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -212,20 +208,47 @@ def fetch_minute_data(
     return pd.DataFrame()
 
 
-def drop_target_table(db_handler, table_new: str):
-    """清空新表."""
+def read_codes_from_file(file_path: str) -> List[str]:
+    """从文本文件读取 ts_code 列表."""
+    if not os.path.isfile(file_path):
+        print(f"失败文件 {file_path} 不存在")
+        return []
+    codes: List[str] = []
+    with open(file_path, "r", encoding="utf-8") as file:
+        for line in file:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            code = line.split()[0]
+            codes.append(code)
+    return codes
+
+
+def write_failed_codes(failed_items: List[Tuple[str, str]], file_path: str):
+    """将失败的股票写入文件."""
+    if not failed_items:
+        if os.path.isfile(file_path):
+            os.remove(file_path)
+            print(f"无失败项，已删除 {file_path}")
+        else:
+            print("无失败项，不生成失败文件")
+        return
+
     try:
-        with db_handler.get_engine().connect() as conn:
-            print(f"清空或创建 {table_new} 表...")
-            conn.execute(text(f"DROP TABLE IF EXISTS {table_new}"))
-            conn.commit()
-        with db_handler._table_lock:  # noqa: SLF001
-            db_handler._existing_tables.discard(table_new)  # noqa: SLF001
+        with open(file_path, "w", encoding="utf-8") as file:
+            for code, reason in failed_items:
+                file.write(f"{code}\t{reason}\n")
+        print(f"失败列表已写入 {file_path}（{len(failed_items)} 条）")
     except Exception as exc:  # pylint: disable=broad-except
-        print(f"清理 {table_new} 失败: {exc}")
+        print(f"写入失败文件 {file_path} 出错: {exc}")
 
 
-def sync_stock_minute(period: int, ts_filter: Optional[str], max_workers: int = DEFAULT_WORKERS) -> bool:
+def sync_stock_minute(
+    period: int,
+    sleep_interval: float,
+    target_codes: Optional[List[str]],
+    failed_file: str,
+) -> bool:
     """主流程."""
     if period not in VALID_PERIODS:
         raise ValueError(f"仅支持 {sorted(VALID_PERIODS)} 分钟周期")
@@ -233,16 +256,19 @@ def sync_stock_minute(period: int, ts_filter: Optional[str], max_workers: int = 
     table, table_new = get_table_names(period)
     print("=" * 60)
     print(f"同步最近 {START_OFFSET_DAYS} 天 {period} 分钟数据 → 写入 {table_new}")
-    if ts_filter:
-        print(f"仅同步: {ts_filter}")
+    if target_codes is not None:
+        print(f"仅同步指定的 {len(target_codes)} 个标的")
     print("=" * 60)
 
     try:
         db_handler = get_db_handler()
-        stock_codes = load_stock_codes(db_handler, ts_filter)
-        if not stock_codes:
-            print("未获取到股票代码")
-            return False
+        if target_codes is not None:
+            stock_codes = target_codes
+        else:
+            stock_codes = load_stock_codes(db_handler)
+            if not stock_codes:
+                print("未获取到股票代码")
+                return False
 
         stock_items: List[Tuple[str, str]] = []
         for ts_code in stock_codes:
@@ -254,104 +280,160 @@ def sync_stock_minute(period: int, ts_filter: Optional[str], max_workers: int = 
             print("没有可用的标的")
             return False
 
-        start_time, end_time = calculate_time_range(ts_filter)
+        start_time, end_time = calculate_time_range()
         print(f"起始时间: {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"结束时间: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"股票数量: {len(stock_items)}")
 
-        drop_target_table(db_handler, table_new)
+        engine = db_handler.get_engine()
+        inspector = inspect(engine)
+        table_exists = inspector.has_table(table_new)
+        if table_exists:
+            print(f"{table_new} 已存在，将以追加方式写入")
+        else:
+            print(f"{table_new} 不存在，将自动创建")
+        table_ready = table_exists
 
         total_records = 0
         success_count = 0
-        failed_items: List[str] = []
-        first_batch = True
+        failed_items: List[Tuple[str, str]] = []
+        any_written = False
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_map: Dict = {
-                executor.submit(fetch_minute_data, ts_code, stock_code, start_time, end_time, period): ts_code
-                for ts_code, stock_code in stock_items
-            }
-
-            with tqdm(total=len(future_map), desc="同步进度", unit="stock") as pbar:
-                for future in as_completed(future_map):
-                    ts_code = future_map[future]
-                    try:
-                        df = future.result()
-                    except Exception as exc:  # pylint: disable=broad-except
-                        failed_items.append(f"{ts_code}:{exc}")
-                        pbar.update(1)
-                        continue
-
-                    if df.empty:
-                        failed_items.append(f"{ts_code}:无数据")
-                        pbar.update(1)
-                        continue
-
-                    try:
-                        if first_batch:
-                            df.to_sql(table_new, db_handler.get_engine(), if_exists="replace", index=False)
-                            db_handler._create_indexes(table_new, df.columns.tolist())  # noqa: SLF001
-                            first_batch = False
-                        else:
-                            df.to_sql(table_new, db_handler.get_engine(), if_exists="append", index=False)
-
-                        total_records += len(df)
-                        success_count += 1
-                    except Exception as exc:  # pylint: disable=broad-except
-                        failed_items.append(f"{ts_code}:写入失败:{exc}")
-
+        total_tasks = len(stock_items)
+        with tqdm(total=total_tasks, desc="同步进度", unit="stock") as pbar:
+            aborted = False
+            for index, (ts_code, stock_code) in enumerate(stock_items, start=1):
+                try:
+                    df = fetch_minute_data(ts_code, stock_code, start_time, end_time, period)
+                except Exception as exc:  # pylint: disable=broad-except
+                    failed_items.append((ts_code, f"请求失败:{exc}"))
+                    print(f"[{index}/{total_tasks}] {ts_code} 请求失败: {exc}")
                     pbar.update(1)
+                    if sleep_interval > 0:
+                        time.sleep(sleep_interval)
+                    aborted = True
+                    abort_reason = f"请求失败:{exc}"
+                    break
+
+                if df.empty:
+                    failed_items.append((ts_code, "无数据"))
+                    print(f"[{index}/{total_tasks}] {ts_code} 返回空数据（源无记录）")
+                    pbar.update(1)
+                    if sleep_interval > 0:
+                        time.sleep(sleep_interval)
+                    aborted = True
+                    abort_reason = "无数据"
+                    break
+
+                try:
+                    if not table_ready:
+                        df.to_sql(table_new, engine, if_exists="replace", index=False)
+                        db_handler._create_indexes(table_new, df.columns.tolist())  # noqa: SLF001
+                        with db_handler._table_lock:  # noqa: SLF001
+                            db_handler._existing_tables.add(table_new)  # noqa: SLF001
+                        table_ready = True
+                    else:
+                        df.to_sql(table_new, engine, if_exists="append", index=False)
+                    total_records += len(df)
+                    success_count += 1
+                    any_written = True
+                except Exception as exc:  # pylint: disable=broad-except
+                    failed_items.append((ts_code, f"写入失败:{exc}"))
+                    print(f"[{index}/{total_tasks}] {ts_code} 写入失败: {exc}")
+                    aborted = True
+                    abort_reason = f"写入失败:{exc}"
+                    pbar.update(1)
+                    if sleep_interval > 0:
+                        time.sleep(sleep_interval)
+                    break
+
+                pbar.update(1)
+                if sleep_interval > 0:
+                    time.sleep(sleep_interval)
+
+            if aborted:
+                remaining = stock_items[index:]
+                remaining_count = len(remaining)
+                if remaining_count > 0:
+                    print(f"检测到失败({abort_reason})，剩余 {remaining_count} 个标的自动标记为失败")
+                    for rest_ts, _ in remaining:
+                        failed_items.append((rest_ts, "跳过:前序失败"))
+                    pbar.update(remaining_count)
 
         print("-" * 60)
-        if first_batch:
+        if not any_written:
             print(f"未能写入任何数据到 {table_new}")
+            if failed_items:
+                print("全部任务返回空或失败，请检查数据源或时间范围。")
         else:
             print(f"完成：成功 {success_count}/{len(stock_items)}，累计 {total_records} 条记录")
             print(f"数据已写入 {table_new}，请使用 apply_stock_minute.py 应用")
 
         if failed_items:
             print("失败列表示例：")
-            for item in failed_items[:20]:
-                print(f"  - {item}")
-            if len(failed_items) > 20:
-                print(f"  ... 其余 {len(failed_items) - 20} 条")
+            preview = failed_items[:20]
+            for code, reason in preview:
+                print(f"  - {code}: {reason}")
+            if len(failed_items) > len(preview):
+                print(f"  ... 其余 {len(failed_items) - len(preview)} 条")
 
-        return not first_batch
+        write_failed_codes(failed_items, failed_file)
+
+        return any_written
 
     except Exception as exc:  # pylint: disable=broad-except
         print(f"执行异常: {exc}")
         return False
 
 
-def parse_cli_args(argv: List[str]) -> Tuple[int, Optional[str], int]:
+def parse_cli_args(argv: List[str]) -> Tuple[int, Optional[str], float, Optional[str], str]:
     """解析命令行参数."""
-    workers = DEFAULT_WORKERS
     period = DEFAULT_PERIOD
     ts_filter = None
+    sleep_interval = 0.0
+    from_file = None
+    failed_file = FAILED_FILE
 
     idx = 1
     length = len(argv)
     while idx < length:
         arg = argv[idx]
-        if arg == "workers" and idx + 1 < length:
-            workers = int(argv[idx + 1])
-            idx += 2
-        elif arg == "period" and idx + 1 < length:
+        if arg == "period" and idx + 1 < length:
             period = int(argv[idx + 1])
             idx += 2
         elif arg == "ts_code" and idx + 1 < length:
             ts_filter = argv[idx + 1]
             idx += 2
+        elif arg == "sleep" and idx + 1 < length:
+            sleep_interval = float(argv[idx + 1])
+            idx += 2
+        elif arg == "from-file" and idx + 1 < length:
+            from_file = argv[idx + 1]
+            idx += 2
+        elif arg == "failed-file" and idx + 1 < length:
+            failed_file = argv[idx + 1]
+            idx += 2
         else:
             raise ValueError(
-                "参数错误。用法: python stock_minute.py [ts_code 000001.SZ] workers N period {1|5|15|30|60}"
+                "参数错误。用法: python stock_minute.py [ts_code 000001.SZ] "
+                "period {1|5|15|30|60} sleep 0.5 [from-file failed.txt] [failed-file path]"
             )
-    return workers, ts_filter, period
+    return period, ts_filter, sleep_interval, from_file, failed_file
 
 
 def main() -> bool:
-    workers, ts_filter, period = parse_cli_args(sys.argv)
-    return sync_stock_minute(period, ts_filter, workers)
+    period, ts_filter, sleep_interval, from_file, failed_file = parse_cli_args(sys.argv)
+
+    target_codes: Optional[List[str]] = None
+    if from_file:
+        target_codes = read_codes_from_file(from_file)
+        if not target_codes:
+            print("失败文件中没有可用代码，结束。")
+            return False
+    elif ts_filter:
+        target_codes = [ts_filter]
+
+    return sync_stock_minute(period, sleep_interval, target_codes, failed_file)
 
 
 if __name__ == "__main__":
