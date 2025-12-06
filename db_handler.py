@@ -47,12 +47,12 @@ class DatabaseHandler:
     def __init__(self, host: str = None, port: int = None, user: str = None,
                  password: str = None, database: str = None):
         """初始化数据库连接"""
-        self.host = host or os.getenv('MYSQL_HOST', 'localhost')
-        self.port = port or int(os.getenv('MYSQL_PORT', 3306))
+        self.host = host or 'localhost'
+        self.port = port or 3306
         # 使用root用户连接数据库
         self.user = 'root'
-        self.password = password or os.getenv('MYSQL_ROOT_PASSWORD') or os.getenv('MYSQL_PASSWORD', '')
-        self.database = database or os.getenv('MYSQL_DATABASE', 'tushare_sync')
+        self.password = password or os.getenv('MYSQL_ROOT_PASSWORD') or os.getenv('MYSQL_PASSWORD') or ''
+        self.database = database or 'tushare_sync'
 
         self.engine = None
         self._inspector = None

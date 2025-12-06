@@ -18,9 +18,8 @@ VALID_PERIODS = {1, 5, 15, 30, 60}
 
 
 def get_table_names(period: int) -> List[str]:
-    env_key = f"AK_STOCK_{period}M_TABLE"
-    table = os.getenv(env_key, f"stock_{period}m")
-    table_new = os.getenv(f"{env_key}_NEW", f"{table}_new")
+    table = f"stock_{period}m"
+    table_new = f"{table}_new"
     return table, table_new
 
 
@@ -34,7 +33,7 @@ def parse_cli_args(argv: List[str]) -> int:
             idx += 2
         else:
             raise ValueError(
-                "参数错误。用法: python apply-ak-stock-minute-new.py period {1|5|15|30|60}"
+                "参数错误。用法: python apply_stock_minute.py period {1|5|15|30|60}"
             )
     if period not in VALID_PERIODS:
         raise ValueError(f"仅支持 {sorted(VALID_PERIODS)} 分钟周期")

@@ -19,12 +19,10 @@ from db_handler import get_db_handler  # noqa: E402
 # -----------------------------
 # 可配置参数
 # -----------------------------
-CONCEPT_META_TABLE = os.getenv("THS_CONCEPT_META_TABLE", "ths_concept_list")
-MAX_RETRIES = int(os.getenv("THS_CONCEPT_MAX_RETRIES", "3"))
-RETRY_BACKOFF_SECONDS = float(os.getenv("THS_CONCEPT_RETRY_BACKOFF", "5"))
-CONCEPT_NAME_FILTER = [
-    name.strip() for name in os.getenv("THS_CONCEPT_NAME_FILTER", "").split(",") if name.strip()
-]
+CONCEPT_META_TABLE = "ths_concept_list"
+MAX_RETRIES = 3
+RETRY_BACKOFF_SECONDS = 5.0
+CONCEPT_NAME_FILTER: List[str] = []
 DATA_SOURCE = "tonghuashun"
 
 

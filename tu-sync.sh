@@ -11,5 +11,5 @@ python filter_stock_basic.py #过滤掉688，920，ST
 
 python daily.py range
 python daily_qfq.py workers 8
-python apply-qfq-new.py
+python apply_qfq.py
 python check_daily_qfq.py
