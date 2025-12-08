@@ -7,4 +7,6 @@ pymysql>=1.0.3
 tqdm>=4.66.0
 pywencai>=0.9.40
 requests>=2.31.0
+akshare>=1.17.70
 adata>=2.9.4
+jqdatasdk>=1.9.0

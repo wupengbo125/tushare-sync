@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-使用 AData / 东财分钟级行情接口, 同步最近 N 天 A 股分钟数据到 *_new 表
+使用 AkShare / 新浪 & 东财分钟级行情接口, 同步最近 N 天 A 股分钟数据到 *_new 表
 """
 import os
 import sys
@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timedelta
 from typing import List, Optional, Tuple
 
-import adata
+import akshare as ak
 import pandas as pd
 import requests
 from sqlalchemy import inspect
@@ -23,7 +23,8 @@ DEFAULT_PERIOD = 30
 VALID_PERIODS = {1, 5, 15, 30, 60}
 START_OFFSET_DAYS = 30
 ADJUST_TYPE = 1
-DATA_SOURCE = "adata_east"
+AK_ADJUST_MAP = {0: "", 1: "qfq", 2: "hfq"}
+DATA_SOURCE = "akshare_sina"
 FAILED_FILE = "failed_stock_minute.txt"
 
 
@@ -61,44 +62,50 @@ def calculate_time_range() -> Tuple[datetime, datetime]:
     return start, now
 
 
-def _fetch_minute_via_adata(
+def _fetch_minute_via_akshare(
     stock_code: str,
     start_time: datetime,
     end_time: datetime,
     period: int,
 ) -> pd.DataFrame:
-    """调用 AData 的 get_market 接口获取 5/15/30/60 分钟数据."""
-    start_date = start_time.strftime("%Y-%m-%d")
-    end_date = end_time.strftime("%Y-%m-%d")
-    df = adata.stock.market.get_market(
-        stock_code=stock_code,
-        start_date=start_date,
-        end_date=end_date,
-        k_type=period,
-        adjust_type=ADJUST_TYPE,
-    )
+    """调用 AkShare 的新浪分钟行情接口获取 5/15/30/60 分钟数据."""
+    if stock_code.startswith(("6", "9")):
+        symbol = f"sh{stock_code}"
+    elif stock_code.startswith(("4", "8")):
+        symbol = f"bj{stock_code}"
+    else:
+        symbol = f"sz{stock_code}"
+
+    adjust = AK_ADJUST_MAP.get(ADJUST_TYPE, "")
+    df = ak.stock_zh_a_minute(symbol=symbol, period=str(period), adjust=adjust)
     if df is None or df.empty:
         return pd.DataFrame()
-    df = df.copy()
+
+    rename_map = {
+        "day": "trade_time",
+        "open": "open",
+        "high": "high",
+        "low": "low",
+        "close": "close",
+        "volume": "volume",
+    }
+    missing_cols = [col for col in rename_map if col not in df.columns]
+    if missing_cols:
+        print(f"新浪分钟数据缺少列: {missing_cols}")
+        return pd.DataFrame()
+
+    df = df.rename(columns=rename_map)
     df["trade_time"] = pd.to_datetime(df["trade_time"], errors="coerce")
     df = df.dropna(subset=["trade_time"])
     df = df[(df["trade_time"] >= start_time) & (df["trade_time"] <= end_time)]
     if df.empty:
         return df
 
-    rename_map = {
-        "open": "open",
-        "high": "high",
-        "low": "low",
-        "close": "close",
-        "volume": "volume",
-        "amount": "amount",
-    }
-    df = df.rename(columns=rename_map)
-    numeric_cols = ["open", "high", "low", "close", "volume", "amount"]
+    numeric_cols = ["open", "high", "low", "close", "volume"]
     for col in numeric_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce")
     df = df.dropna(subset=["close"])
+    df["amount"] = df["close"] * df["volume"]
     df["trade_time"] = df["trade_time"].dt.strftime("%Y-%m-%d %H:%M:%S")
     return df[["trade_time", "open", "high", "low", "close", "volume", "amount"]]
 
@@ -180,7 +187,9 @@ def fetch_minute_data(
             if period == 1:
                 df = _fetch_minute_one_minute(stock_code, start_time, end_time)
             else:
-                df = _fetch_minute_via_adata(stock_code, start_time, end_time, period)
+                df = _fetch_minute_via_akshare(
+                    stock_code, start_time, end_time, period
+                )
             if df is None or df.empty:
                 return pd.DataFrame()
             df = df.copy()
@@ -367,7 +376,7 @@ def sync_stock_minute(
                 print("全部任务返回空或失败，请检查数据源或时间范围。")
         else:
             print(f"完成：成功 {success_count}/{len(stock_items)}，累计 {total_records} 条记录")
-            print(f"数据已写入 {table_new}，请使用 apply_stock_minute.py 应用")
+            print(f"数据已写入 {table_new}，请运行: python apply_table.py {table_new} {table}")
 
         if failed_items:
             print("失败列表示例：")

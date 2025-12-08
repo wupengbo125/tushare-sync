@@ -168,6 +168,21 @@ class DatabaseHandler:
                 ('trade_date', 'INDEX'),
                 ('ts_code_trade_date', 'INDEX (ts_code, trade_date)'),
             ],
+            'daily_qfq_ak_sina': [
+                ('ts_code', 'INDEX'),
+                ('trade_date', 'INDEX'),
+                ('ts_code_trade_date', 'INDEX (ts_code, trade_date)'),
+            ],
+            'daily_qfq_ak_tx': [
+                ('ts_code', 'INDEX'),
+                ('trade_date', 'INDEX'),
+                ('ts_code_trade_date', 'INDEX (ts_code, trade_date)'),
+            ],
+            'daily_qfq_ak_em': [
+                ('ts_code', 'INDEX'),
+                ('trade_date', 'INDEX'),
+                ('ts_code_trade_date', 'INDEX (ts_code, trade_date)'),
+            ],
             'ths_concept_index_daily': [
                 ('concept_code', 'INDEX'),
                 ('trade_date', 'INDEX'),
