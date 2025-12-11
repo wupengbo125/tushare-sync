@@ -12,3 +12,5 @@ python filter_stock_basic.py #过滤掉688，920，ST
 python daily.py range
 python daily_qfq.py workers 7
 python apply_table.py daily_qfq_new daily_qfq
+python sync_ths_concept_list.py
+python sync_ths_concepts.py workers 10

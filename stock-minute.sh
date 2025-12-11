@@ -1,0 +1,1 @@
+python stock-minute.py from-file xxx.txt sleep 15
