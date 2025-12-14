@@ -8,6 +8,15 @@ import time
 from typing import Dict, List, Optional
 
 import pandas as pd
+
+# pywencai 内部可能通过 Node.js 执行脚本；部分 Node 版本会输出
+# `punycode` 的 DeprecationWarning，属于依赖噪音且不影响功能。
+# 默认抑制该类告警，如需显示可设置：TUSHARE_SYNC_SHOW_NODE_DEPRECATION=1
+if os.getenv("TUSHARE_SYNC_SHOW_NODE_DEPRECATION", "").strip().lower() not in {"1", "true", "yes"}:
+    node_options = os.environ.get("NODE_OPTIONS", "")
+    if "--no-deprecation" not in node_options:
+        os.environ["NODE_OPTIONS"] = (node_options + " --no-deprecation").strip()
+
 import pywencai
 from sqlalchemy import text
 

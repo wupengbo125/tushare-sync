@@ -198,6 +198,10 @@ tail -f /home/pengbo/github/tushare-sync/sync_all.log
 #### Crontab 执行失败
 - 检查 `sync_all.log` 日志文件
 - 验证 conda 环境路径是否正确
+
+#### Node.js `punycode` DeprecationWarning
+- `sync_ths_concept_list.py` 使用的 `pywencai` 可能触发该告警，不影响同步结果
+- 默认已抑制该类告警；如需显示可设置：`TUSHARE_SYNC_SHOW_NODE_DEPRECATION=1`
 - 确认脚本文件权限 (`chmod +x sync_all.sh`)
 - 检查 `.env` 文件是否存在且格式正确
 
