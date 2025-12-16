@@ -143,7 +143,7 @@ def sync_concept_list():
             db_handler._existing_tables.add(CONCEPT_META_TABLE)  # noqa: SLF001
 
         print(f"概念列表已写入 {CONCEPT_META_TABLE}，共 {len(df)} 条记录")
-        print("操作完成，如需同步行情请运行 sync_ths_concepts.py")
+        print("操作完成，如需同步行情请运行 sync_ths_concepts_adata.py")
         return True
 
     except Exception as exc:  # pylint: disable=broad-except

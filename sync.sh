@@ -13,4 +13,9 @@ python daily.py range
 python daily_qfq.py workers 7
 python apply_table.py daily_qfq_new daily_qfq
 python sync_ths_concept_list.py
-python sync_ths_concepts.py workers 10
+python sync_ths_concepts_adata.py workers 10
+
+for i in 1 2 3 4 5 6 7 8 9 10; do
+python ths-concept-failed-concepts.py
+python sync_ths_concepts_ak.py from-file failed_concepts.txt
+done
