@@ -54,15 +54,16 @@ def apply_table(new_table: str, old_table: str) -> bool:
         inspector = inspect(engine)
 
         with engine.connect() as conn:
+            # 先检查新表是否存在：不存在则不做任何破坏性操作（不删除旧表）
+            if not inspector.has_table(new_table):
+                print(f"错误: 新表 {new_table} 不存在，取消操作（不会删除旧表 {old_table}）")
+                return False
+
             if inspector.has_table(old_table):
                 print(f"删除旧表: {old_table} ...")
                 conn.execute(text(f"DROP TABLE `{old_table}`"))
                 conn.commit()
                 print(f"已删除 {old_table}")
-
-            if not inspector.has_table(new_table):
-                print(f"错误: 新表 {new_table} 不存在，无法重命名")
-                return False
 
             print(f"重命名 {new_table} → {old_table} ...")
             conn.execute(text(f"ALTER TABLE `{new_table}` RENAME TO `{old_table}`"))
