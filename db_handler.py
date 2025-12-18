@@ -27,14 +27,23 @@ UPSERT_TABLE_CONFIG = {
     'daily': {
         'unique_key': 'uniq_ts_trade_date',
         'columns': [('ts_code', 20), ('trade_date', 20)],
+        # default: INSERT IGNORE
     },
     'daily_qfq': {
         'unique_key': 'uniq_ts_trade_date',
         'columns': [('ts_code', 20), ('trade_date', 20)],
+        # default: INSERT IGNORE
     },
     'ths_concept_index_daily': {
         'unique_key': 'uniq_concept_trade_date',
         'columns': [('concept_code', 40), ('trade_date', 20)],
+        # default: INSERT IGNORE
+    },
+    'ths_hot_concept': {
+        'unique_key': 'uniq_concept_code',
+        'columns': [('concept_code', 40)],
+        # 覆盖更新：同一个 concept_code 用最新数据替换
+        'strategy': 'replace',  # values: ignore | replace
     },
     # ths_concept_list 不需要临时表 UPSERT，整表重建
 }
@@ -281,6 +290,10 @@ class DatabaseHandler:
             # 对于daily_qfq和daily表，使用INSERT IGNORE避免重复数据
             if table_name in UPSERT_TABLE_CONFIG:
                 table_config = UPSERT_TABLE_CONFIG[table_name]
+                strategy = (table_config.get('strategy') or 'ignore').lower()
+                if strategy not in ('ignore', 'replace'):
+                    logger.warning(f"未知的 UPSERT strategy={strategy}，回退为 ignore: {table_name}")
+                    strategy = 'ignore'
                 # 先创建临时表
                 temp_table = f"temp_{table_name}_{int(datetime.now().timestamp())}"
                 data.to_sql(temp_table, self.engine, if_exists='replace', index=False)
@@ -303,11 +316,17 @@ class DatabaseHandler:
                         # 约束可能已存在，忽略错误
                         logger.debug(f"添加唯一约束失败（可能已存在）: {e}")
 
-                    # 使用INSERT IGNORE插入
-                    insert_sql = f"""
-                        INSERT IGNORE INTO {table_name}
-                        SELECT * FROM {temp_table}
-                    """
+                    # 写入策略
+                    if strategy == 'replace':
+                        insert_sql = f"""
+                            REPLACE INTO {table_name}
+                            SELECT * FROM {temp_table}
+                        """
+                    else:
+                        insert_sql = f"""
+                            INSERT IGNORE INTO {table_name}
+                            SELECT * FROM {temp_table}
+                        """
                     result = conn.execute(text(insert_sql))
                     conn.commit()
                     rows_affected = result.rowcount

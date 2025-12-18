@@ -14,4 +14,6 @@ python ths-concept-failed-concepts.py
 python sync_ths_concepts_ak.py from-file failed_concepts.txt
 done
 
+
 python ths-hot-concept.py
+# python ths-hot-concept.py -d 20251202 --no-sync
