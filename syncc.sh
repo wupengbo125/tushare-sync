@@ -18,3 +18,4 @@ done
 python ths-hot-concept.py
 # python ths-hot-concept.py -d 20251202 --no-sync
 # python sync_stock_concept.py
+# python sync_stock_concept_adata_ths.py

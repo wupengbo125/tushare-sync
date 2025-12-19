@@ -1,0 +1,10 @@
+stock_code,ts_code,name,source_db,yield_5y_pct,yield_3y_pct,yield_1y_pct,rank_yield_5y,rank_yield_3y,rank_yield_1y
+000001,000001.SZ,平安银行,tushare_sync,19.3223,16.7705,5.1695,1,1,1
+000012,000012.SZ,南玻A,tushare_sync,12.7295,9.0691,1.4056,4,2,2
+000011,000011.SZ,深物业A,tushare_sync,17.2425,7.9163,0.0,2,3,4
+000002,000002.SZ,万科A,tushare_sync,17.1102,5.0595,0.0,3,4,4
+000014,000014.SZ,沙河股份,tushare_sync,4.154,3.503,0.0,6,5,4
+000006,000006.SZ,深振业A,tushare_sync,8.7912,2.1609,0.0,5,6,4
+000009,000009.SZ,中国宝安,tushare_sync,1.5302,1.181,0.3181,7,7,3
+000007,000007.SZ,全新好,tushare_sync,0.0,0.0,0.0,8,8,4
+000010,000010.SZ,美丽生态,tushare_sync,0.0,0.0,0.0,8,8,4
