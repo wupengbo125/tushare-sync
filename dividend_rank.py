@@ -350,7 +350,8 @@ def main():
         sys.exit(0)
 
     output_path = "dividend_last5y.csv"
-    report_df.to_csv(output_path, index=False, encoding="utf-8")
+    # 使用带 BOM 的 UTF-8 方便 Excel 正常显示中文
+    report_df.to_csv(output_path, index=False, encoding="utf-8-sig")
     logger.info("已写出CSV: %s (共 %d 行)", output_path, len(report_df))
 
 
