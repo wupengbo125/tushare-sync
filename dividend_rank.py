@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Dict, List
 import re
 from datetime import timedelta
+import concurrent.futures
 
 import pandas as pd
 from sqlalchemy import text
@@ -209,6 +210,7 @@ def build_report(
     years: List[int],
     engine,
     allow_qfq_fallback: bool = False,
+    workers: int = 1,
     limit: int = None,
 ) -> pd.DataFrame:
     """遍历股票并生成分红汇总结果（单线程，每只都打印）"""
@@ -216,39 +218,52 @@ def build_report(
     total_stocks = len(stocks) if not limit else min(len(stocks), limit)
     logger.info("准备处理 %s 只股票（去重后）", total_stocks)
 
-    for idx, row in enumerate(stocks.itertuples(index=False), start=1):
-        if limit and idx > limit:
-            logger.info("达到限制 %s 条，提前结束", limit)
-            break
+    rows = list(stocks.itertuples(index=False))
+    if limit:
+        rows = rows[:limit]
 
-        row_dict = row._asdict()
+    def _process(row_tuple):
+        row_dict = row_tuple._asdict()
         code = normalize_stock_code(pd.Series(row_dict))
         if not code:
-            logger.info("跳过无效代码: %s", row_dict)
-            continue
+            return None, f"跳过无效代码: {row_dict}"
 
         cash_by_year, yield_by_year = compute_dividend_by_year(
             code, row_dict.get("ts_code", ""), years, engine, allow_qfq_fallback=allow_qfq_fallback
         )
         if not cash_by_year:
-            logger.info("无分红数据: %s %s", code, row_dict.get("name") or "")
-        else:
-            record: Dict[str, object] = {
-                "stock_code": code,
-                "ts_code": row_dict.get("ts_code", "") or "",
-                "name": row_dict.get("name", "") or "",
-                "source_db": row_dict.get("source_db", "") or "",
-            }
-            # 收益率（基于除权日收盘价，单位：百分比）
-            yield_5y = sum(yield_by_year.get(y, 0.0) for y in years)
-            yield_3y = sum(yield_by_year.get(y, 0.0) for y in years[:3])
-            yield_1y = yield_by_year.get(years[0], 0.0)
-            record["yield_5y_pct"] = round(yield_5y * 100, 4)
-            record["yield_3y_pct"] = round(yield_3y * 100, 4)
-            record["yield_1y_pct"] = round(yield_1y * 100, 4)
-            records.append(record)
+            return None, f"无分红数据: {code} {row_dict.get('name') or ''}"
 
-        logger.info("已处理 %d/%d %s %s", idx, total_stocks, code, row_dict.get("name") or "")
+        record: Dict[str, object] = {
+            "stock_code": code,
+            "ts_code": row_dict.get("ts_code", "") or "",
+            "name": row_dict.get("name", "") or "",
+            "source_db": row_dict.get("source_db", "") or "",
+        }
+        yield_5y = sum(yield_by_year.get(y, 0.0) for y in years)
+        yield_3y = sum(yield_by_year.get(y, 0.0) for y in years[:3])
+        yield_1y = yield_by_year.get(years[0], 0.0)
+        record["yield_5y_pct"] = round(yield_5y * 100, 4)
+        record["yield_3y_pct"] = round(yield_3y * 100, 4)
+        record["yield_1y_pct"] = round(yield_1y * 100, 4)
+        return record, None
+
+    if workers and workers > 1:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as executor:
+            for idx, (record, msg) in enumerate(executor.map(_process, rows), start=1):
+                if msg:
+                    logger.info(msg)
+                if record:
+                    records.append(record)
+                logger.info("已处理 %d/%d %s %s", idx, total_stocks, record["stock_code"] if record else "", record["name"] if record else "")
+    else:
+        for idx, row in enumerate(rows, start=1):
+            record, msg = _process(row)
+            if msg:
+                logger.info(msg)
+            if record:
+                records.append(record)
+            logger.info("已处理 %d/%d %s %s", idx, total_stocks, record["stock_code"] if record else "", record["name"] if record else "")
 
     df = pd.DataFrame(records)
     if not df.empty:
@@ -282,6 +297,12 @@ def main():
         "--allow-qfq-fallback",
         action="store_true",
         help="当 daily 缺少除权日价格时，允许回退 daily_qfq（前复权）作为参考价",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="线程数，>1 时开启多线程提速（默认 1 单线程）",
     )
     args = parser.parse_args()
 
@@ -321,6 +342,7 @@ def main():
         years,
         engine,
         allow_qfq_fallback=args.allow_qfq_fallback,
+        workers=max(1, args.workers),
         limit=args.limit,
     )
     if report_df.empty:
