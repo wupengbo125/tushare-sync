@@ -31,7 +31,7 @@ def print_section(title: str, df: Optional[object]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="汇总风险排雷、关联热度、同花顺概念、分红信息。"
+        description="汇总风险排雷、关联热度、同花顺概念、分红、资金流、热度信息。"
     )
     parser.add_argument("stock_code", help="股票代码，例如 600446")
     args = parser.parse_args()
@@ -63,10 +63,37 @@ def main() -> None:
         print(f"获取分红信息失败: {exc}", file=sys.stderr)
         dividend_df = None
 
+    try:
+        capital_flow_df = adata.stock.market.get_capital_flow_min(stock_code=stock_code)
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"获取资金流信息失败: {exc}", file=sys.stderr)
+        capital_flow_df = None
+
+    try:
+        from ths_stock_hot_rank import fetch_hot_rank, normalize_code as normalize_ths_code
+    except Exception as exc:  # pragma: no cover - defensive
+        print(f"加载同花顺热度模块失败: {exc}", file=sys.stderr)
+        hot_rank_df: Optional[object] = None
+    else:
+        try:
+            ths_code = normalize_ths_code(stock_code)
+            hot_rank_data = fetch_hot_rank(ths_code)
+            try:
+                import pandas as pd
+
+                hot_rank_df = pd.DataFrame([hot_rank_data])
+            except Exception:
+                hot_rank_df = hot_rank_data
+        except Exception as exc:  # pragma: no cover - defensive
+            print(f"获取同花顺热度失败: {exc}", file=sys.stderr)
+            hot_rank_df = None
+
     print_section("风险排雷 (mine_clearance_tdx)", mine_df)
     print_section("关联热度 (stock_hot_rank_relate_em)", relate_df)
     print_section("同花顺概念 (get_concept_ths)", concept_df)
     print_section("分红信息 (get_dividend)", dividend_df)
+    print_section("分钟资金流 (get_capital_flow_min)", capital_flow_df)
+    print_section("同花顺热度 (ths_stock_hot_rank)", hot_rank_df)
 
 
 if __name__ == "__main__":
