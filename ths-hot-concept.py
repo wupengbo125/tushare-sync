@@ -112,14 +112,6 @@ def sync_ths_hot_concept() -> bool:
         ]
         kept = kept[cols]
 
-        # 可选：仍输出当天 CSV 便于人工核对
-        os.makedirs("./ths-hot-concept", exist_ok=True)
-        kept.to_csv(
-            f"./ths-hot-concept/{trade_date}.csv",
-            index=False,
-            encoding="utf-8-sig",
-        )
-
         db_handler = get_db_handler()
         ok = db_handler.insert_data("ths_hot_concept", kept, trade_date)
         print("同步完成" if ok else "同步失败")
