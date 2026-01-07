@@ -5,3 +5,5 @@ AIGC概念
 PVDF概念
 跨境支付(CIPS)
 MicroLED概念
+HJT电池
+DRG/DIP

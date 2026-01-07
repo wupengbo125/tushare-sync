@@ -18,7 +18,6 @@ done
 python ths-hot-concept.py
 # python ths-hot-concept.py -d 20251202 --no-sync
 # python sync_stock_concept_akshare_em.py
-python3 sync_stock_concept_adata_ths.py  
-python3 sync_stock_concept_adata_ths.py -c --workers 1
+python3 sync_stock_concept_adata_ths.py
 
 # python dividend_rank.py --workers 8 --allow-qfq-fallback

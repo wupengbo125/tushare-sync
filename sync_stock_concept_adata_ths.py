@@ -6,6 +6,7 @@
 支持失败重试（-c 参数从失败文件读取）。
 """
 import argparse
+import datetime
 import time
 import os
 from typing import Dict, List, Optional
@@ -274,6 +275,12 @@ def main() -> None:
     parser.add_argument("--max-concepts", type=int, default=None, help="每只股票最多保存的概念数量（默认=None，保存所有概念）")
     parser.add_argument("--workers", type=int, default=1, help="并发线程数（默认=1）")
     args = parser.parse_args()
+
+    # 仅在周三运行；非周三直接退出（返回码为 0，以便调度器不视为失败）
+    # Python 的 weekday(): 周一=0, 周二=1, 周三=2, ... 周日=6
+    if datetime.datetime.now().weekday() != 2:
+        print("今天不是周三，任务跳过并退出。")
+        return
 
     handler = get_db_handler()
     engine = handler.get_engine()
