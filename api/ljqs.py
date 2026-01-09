@@ -1,4 +1,5 @@
 import akshare as ak
 #量价齐升
-stock_rank_ljqs_ths_df = ak.stock_rank_ljqs_ths()
-print(stock_rank_ljqs_ths_df)
+df = ak.stock_rank_ljqs_ths()
+
+df.to_csv('ljqs_ths.csv', index=False, encoding='utf-8-sig')
