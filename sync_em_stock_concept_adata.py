@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-使用 AData 的 get_concept_ths 接口，为 stock_basic 中的股票写入所有概念。
-写入表结构与 sync_stock_concept.py 保持一致，目标表：ths_stock_concept。
+使用 AData 的 get_concept_east 接口，为 stock_basic 中的股票写入所有概念。
+写入表结构与 sync_stock_concept.py 保持一致，目标表：em_stock_concept。
 支持多线程并发处理。
-支持失败重试（-c 参数从失败文件读取）。
+输出失败文件（failed-em-stock-concept.txt）。
 """
 import argparse
-import datetime
 import time
 import os
 from typing import Dict, List, Optional
@@ -19,13 +18,13 @@ from sqlalchemy import text
 
 from db_handler import get_db_handler
 
-TABLE_NAME = "ths_stock_concept"
-SOURCE = "adata.stock.info.get_concept_ths"
-FAILED_FILE = "failed-stock-concept-adata-ths.txt"
+TABLE_NAME = "em_stock_concept"
+SOURCE = "adata.stock.info.get_concept_east"
+FAILED_FILE = "failed-em-stock-concept.txt"
 
 
 def ensure_table(engine) -> None:
-    """创建 ths_stock_concept 表（如不存在）。"""
+    """创建 em_stock_concept 表（如不存在）。"""
     create_sql = f"""
     CREATE TABLE IF NOT EXISTS `{TABLE_NAME}` (
         `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -44,34 +43,6 @@ def ensure_table(engine) -> None:
     with engine.connect() as conn:
         conn.execute(text(create_sql))
         conn.commit()
-
-
-def load_failed_stocks(file_path: str) -> List[Dict]:
-    """从失败文件加载股票列表。"""
-    if not os.path.exists(file_path):
-        print(f"失败文件不存在: {file_path}")
-        return []
-
-    failed_stocks = []
-    with open(file_path, 'r', encoding='utf-8') as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                # 每行格式: ts_code,symbol,stock_code 或 ts_code
-                parts = line.split(',')
-                if len(parts) >= 2:
-                    failed_stocks.append({
-                        "ts_code": parts[0],
-                        "symbol": parts[1],
-                        "stock_code": parts[2] if len(parts) > 2 else normalize_stock_code(parts[1])
-                    })
-                else:
-                    # 只有 ts_code，需要查询数据库
-                    ts_code = line
-                    failed_stocks.append({"ts_code": ts_code})
-
-    print(f"从失败文件加载 {len(failed_stocks)} 只股票")
-    return failed_stocks
 
 
 def load_stocks(engine, limit: Optional[int], offset: int) -> pd.DataFrame:
@@ -118,7 +89,7 @@ def fetch_concepts(stock_code: str, retries: int, pause: float) -> Optional[pd.D
     last_err = None
     for attempt in range(1, retries + 1):
         try:
-            df = adata.stock.info.get_concept_ths(stock_code=stock_code)
+            df = adata.stock.info.get_concept_east(stock_code=stock_code)
             return df
         except Exception as exc:  # noqa: BLE001
             last_err = exc
@@ -257,80 +228,35 @@ def process_stock(
             progress_counter[0] += 1
             current = progress_counter[0]
             total = progress_counter[1]
-            status = "✓" if result["success"] else "✗"
-            concepts_info = f"写入 {result['concepts_count']} 条概念" if result["success"] else result["error"]
+            status = "OK" if result["success"] else "FAIL"
+            concepts_info = f"{result['concepts_count']}" if result["success"] else result["error"]
             print(f"[{current}/{total}] {ts_code} ({stock_code}) {status} - {concepts_info}")
 
     return result
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="为股票写入所有概念（AData 同花顺接口，覆盖写入，支持多线程）。")
-    parser.add_argument("-c", "--continue", action="store_true", dest="continue_mode",
-                        help="从失败文件读取股票列表进行重试")
+    parser = argparse.ArgumentParser(description="为股票写入所有概念（AData 东方财富接口，覆盖写入，支持多线程）。")
     parser.add_argument("--limit", type=int, default=None, help="最多处理多少只股票")
     parser.add_argument("--offset", type=int, default=0, help="起始偏移，用于断点续跑")
     parser.add_argument("--sleep", type=float, default=0.2, help="接口失败重试时的休眠秒数")
     parser.add_argument("--retries", type=int, default=3, help="接口失败重试次数")
-    parser.add_argument("--max-concepts", type=int, default=None, help="每只股票最多保存的概念数量（默认=None，保存所有概念）")
+    parser.add_argument("--max-concepts", type=int, default=10, help="每只股票最多保存的概念数量（默认=10，保存前10个）")
     parser.add_argument("--workers", type=int, default=1, help="并发线程数（默认=1）")
     args = parser.parse_args()
-
-    # 仅在周三运行；非周三直接退出（返回码为 0，以便调度器不视为失败）
-    # Python 的 weekday(): 周一=0, 周二=1, 周三=2, ... 周日=6
-    if datetime.datetime.now().weekday() != 2:
-        print("今天不是周三，任务跳过并退出。")
-        return
 
     handler = get_db_handler()
     engine = handler.get_engine()
     ensure_table(engine)
 
-    # 准备任务列表
     tasks = []
-
-    if args.continue_mode:
-        # 从失败文件读取
-        print(f"从失败文件读取: {FAILED_FILE}")
-        failed_list = load_failed_stocks(FAILED_FILE)
-
-        # 如果失败文件中只有 ts_code，需要从数据库查询完整信息
-        for item in failed_list:
-            if "symbol" not in item or "stock_code" not in item:
-                # 从数据库查询
-                sql = text("SELECT ts_code, symbol, name, exchange FROM stock_basic WHERE ts_code = :ts_code")
-                with engine.connect() as conn:
-                    result = conn.execute(sql, {"ts_code": item["ts_code"]}).fetchone()
-                if result:
-                    ts_code, symbol, name, exchange = result
-                    stock_code = normalize_stock_code(symbol)
-                    if stock_code:
-                        tasks.append({
-                            "ts_code": ts_code,
-                            "symbol": symbol,
-                            "stock_code": stock_code,
-                        })
-                else:
-                    print(f"[WARN] 数据库中未找到股票: {item['ts_code']}")
-            else:
-                # 已有完整信息
-                tasks.append(item)
-    else:
-        # 从数据库加载股票
-        stocks_df = load_stocks(engine, args.limit, args.offset)
-        for _, row in stocks_df.iterrows():
-            ts_code = row["ts_code"]
-            symbol = row["symbol"]
-            stock_code = normalize_stock_code(symbol)
-            if not stock_code:
-                print(f"[WARN] {ts_code} 无法识别股票代码，跳过")
-                continue
-
-            tasks.append({
-                "ts_code": ts_code,
-                "symbol": symbol,
-                "stock_code": stock_code,
-            })
+    stocks_df = load_stocks(engine, args.limit, args.offset)
+    for _, row in stocks_df.iterrows():
+        ts_code = row["ts_code"]
+        symbol = row["symbol"]
+        stock_code = normalize_stock_code(symbol)
+        if stock_code:
+            tasks.append({"ts_code": ts_code, "symbol": symbol, "stock_code": stock_code})
 
     total = len(tasks)
     print(f"待处理股票：{total} 条")
@@ -392,12 +318,11 @@ def main() -> None:
                     f.write(f"{item['ts_code']},{item.get('symbol', '')},{stock_code}\n")
                 else:
                     f.write(f"{item['ts_code']}\n")
-        print(f"\n失败列表已保存到: {FAILED_FILE}")
+        print(f"\nfailed: {FAILED_FILE}")
     else:
         # 如果全部成功，删除失败文件
         if os.path.exists(FAILED_FILE):
             os.remove(FAILED_FILE)
-            print(f"\n全部成功，已删除失败文件: {FAILED_FILE}")
 
     # 输出统计
     print(f"\n处理完成！")
@@ -405,9 +330,7 @@ def main() -> None:
     print(f"失败: {fail_count} 只")
     print(f"总计: {success_count + fail_count} 只")
 
-    if fail_count > 0:
-        print(f"\n提示: 使用 -c 参数重试失败的股票")
-        print(f"python3 {os.path.basename(__file__)} -c --workers {args.workers}")
+    # no retry mode
 
 
 if __name__ == "__main__":

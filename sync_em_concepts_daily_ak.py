@@ -1,7 +1,11 @@
 #!/usr/bin/env python3
 """
-使用 AData 同步同花顺概念指数数据
+使用 AkShare 同步东方财富概念指数（日/周/月）行情数据。
+
+依赖概念列表表：em_concept_list（由 sync_em_concept_list.py 生成）
+目标表：em_concept_daily
 """
+
 import os
 import sys
 import time
@@ -9,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
-import adata
+import akshare as ak
 import pandas as pd
 from sqlalchemy import text
 
@@ -22,19 +26,19 @@ from db_handler import get_db_handler  # noqa: E402
 # -----------------------------
 START_DATE = "20210101"
 END_DATE = None  # 若为空则自动取最近交易日
-TABLE_NAME = "ths_concept_index_daily"
-CONCEPT_META_TABLE = "ths_concept_list"
+TABLE_NAME = "em_concept_daily"
+CONCEPT_META_TABLE = "em_concept_list"
 CONCEPT_META_TABLE_NEW = f"{CONCEPT_META_TABLE}_new"
 MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = 15.0
 REQUEST_INTERVAL_SECONDS = 0.0
 DEFAULT_WORKERS = 10
-FAILED_OUTPUT_PATH = "failed_concepts.txt"
+FAILED_OUTPUT_PATH = "failed-em-concepts-daily.txt"
 SKIP_NAMES_FILE = "ljg.txt"
 CONCEPT_NAME_FILTER: List[str] = []
 K_TYPE = 1  # 1:日 2:周 3:月
-ADJUST_TYPE = 1  # 0:不复权 1:前复权 2:后复权
-DATA_SOURCE = "adata_ths"
+ADJUST = ""  # AkShare adjust: "" | "qfq" | "hfq"
+DATA_SOURCE = "akshare_east"
 
 REQUIRED_COLUMNS = {"trade_date", "open", "high", "low", "close", "volume", "amount"}
 NUMERIC_COLUMNS = ["open", "high", "low", "close", "volume", "amount"]
@@ -53,6 +57,8 @@ def normalize_ymd(date_text: str) -> str:
 def _load_trade_calendar(year: int) -> pd.DataFrame:
     """读取指定年份的交易日历."""
     try:
+        import adata  # 本项目里已使用 AData，复用其交易日历来取最近交易日
+
         return adata.stock.info.trade_calendar(year=year)
     except Exception as exc:  # pylint: disable=broad-except
         print(f"加载 {year} 年交易日历失败: {exc}")
@@ -60,7 +66,7 @@ def _load_trade_calendar(year: int) -> pd.DataFrame:
 
 
 def get_latest_trade_date() -> str:
-    """使用 AData 交易日历获取最近已开市的日期."""
+    """使用 AData 交易日历获取最近已开市的日期（避免 AkShare 接口差异）."""
     print("正在获取最近交易日 (AData)...")
     today = pd.Timestamp.today().normalize()
     calendars: List[pd.DataFrame] = []
@@ -83,74 +89,69 @@ def get_latest_trade_date() -> str:
     return latest.strftime("%Y%m%d")
 
 
-def normalize_concept_code(raw_code: str) -> Optional[str]:
-    """将概念代码转换为 AData 可用格式（去掉 .TI 等后缀，仅保留 8 开头数字）."""
-    if not raw_code:
-        return None
-    code = str(raw_code).strip().upper()
-    for suffix in (".TI", ".SI", ".SH", ".SZ"):
-        if code.endswith(suffix):
-            code = code[: -len(suffix)]
-            break
-    digits = "".join(ch for ch in code if ch.isdigit())
-    if digits.startswith("8"):
-        return digits
-    return None
+def k_type_to_period(k_type: int) -> str:
+    if int(k_type) == 1:
+        return "daily"
+    if int(k_type) == 2:
+        return "weekly"
+    if int(k_type) == 3:
+        return "monthly"
+    raise ValueError(f"不支持的 K_TYPE: {k_type}")
 
 
-def fetch_concept_daily(
-    concept: Dict[str, str],
-    start_date: str,
-    end_date: str,
-) -> pd.DataFrame:
-    """调用 AData 获取同花顺概念指数数据."""
-    concept_code = normalize_concept_code(concept.get("concept_code", ""))
-    concept_name = concept.get("concept_name", "")
-    if not concept_code:
-        print(f"{concept_name} 缺少概念代码，跳过")
+def fetch_concept_daily(concept: Dict[str, str], start_date: str, end_date: str) -> pd.DataFrame:
+    """调用 AkShare 获取东方财富概念指数行情数据."""
+    concept_name = concept.get("concept_name", "").strip()
+    if not concept_name:
         return pd.DataFrame()
-    if not concept_code.startswith("8"):
-        print(f"{concept_name} 代码 {concept_code} 非 8 开头，AData 接口不支持")
-        return pd.DataFrame()
+
+    period = k_type_to_period(K_TYPE)
 
     last_error = None
     for attempt in range(MAX_RETRIES):
         try:
-            df = adata.stock.market.get_market_concept_ths(
-                index_code=concept_code,
-                k_type=K_TYPE,
-                adjust_type=ADJUST_TYPE,
+            # AkShare 接口以“板块名称”作为 symbol 入参
+            df = ak.stock_board_concept_hist_em(
+                symbol=concept_name,
+                period=period,
+                start_date=start_date,
+                end_date=end_date,
+                adjust=ADJUST,
             )
             if df is None or df.empty:
                 return pd.DataFrame()
-
-            df = df.copy()
-            df["trade_date"] = pd.to_datetime(df["trade_date"], errors="coerce")
-            df = df.dropna(subset=["trade_date"])
-            df["trade_date"] = df["trade_date"].dt.strftime("%Y%m%d")
-            df = df[(df["trade_date"] >= start_date) & (df["trade_date"] <= end_date)]
             return df
         except Exception as exc:  # pylint: disable=broad-except
             last_error = exc
             wait_time = RETRY_BACKOFF_SECONDS * (attempt + 1)
-            print(f"{concept_name}({concept_code}) 获取失败，{wait_time:.1f}s 后重试... ({exc})")
+            print(f"{concept_name} 获取失败，{wait_time:.1f}s 后重试... ({exc})")
             time.sleep(wait_time)
 
-    print(f"{concept_name}({concept_code}) 数据获取失败，跳过。错误: {last_error}")
+    print(f"{concept_name} 数据获取失败，跳过。错误: {last_error}")
     return pd.DataFrame()
 
 
 def prepare_daily_records(raw_df: pd.DataFrame, concept: Dict[str, str]) -> pd.DataFrame:
-    """校验字段并添加概念信息."""
+    """将 AkShare 返回字段映射为统一结构并添加概念信息."""
     if raw_df.empty:
         return raw_df
 
-    missing_cols = REQUIRED_COLUMNS - set(raw_df.columns)
-    if missing_cols:
-        raise RuntimeError(f"返回数据缺少必要字段: {missing_cols}")
+    # AkShare columns: ['日期','开盘','收盘','最高','最低','涨跌幅','涨跌额','成交量','成交额','振幅','换手率']
+    col_map = {
+        "日期": "trade_date",
+        "开盘": "open",
+        "最高": "high",
+        "最低": "low",
+        "收盘": "close",
+        "成交量": "volume",
+        "成交额": "amount",
+    }
+    missing = set(col_map.keys()) - set(raw_df.columns)
+    if missing:
+        raise RuntimeError(f"返回数据缺少必要字段: {missing}. 实际字段: {raw_df.columns.tolist()}")
 
-    df = raw_df.copy()
-    df["trade_date"] = pd.to_datetime(df["trade_date"], format="%Y%m%d", errors="coerce")
+    df = raw_df.rename(columns=col_map).copy()
+    df["trade_date"] = pd.to_datetime(df["trade_date"], errors="coerce")
     df = df.dropna(subset=["trade_date"])
     df["trade_date"] = df["trade_date"].dt.strftime("%Y%m%d")
 
@@ -160,9 +161,14 @@ def prepare_daily_records(raw_df: pd.DataFrame, concept: Dict[str, str]) -> pd.D
     df = df.dropna(subset=["close"])
 
     df["concept_name"] = concept["concept_name"]
-    df["concept_code"] = concept["concept_code"]
+    # 这里保留 em_concept_list 里的 concept_code（通常为 BKxxxx）
+    df["concept_code"] = concept.get("concept_code", "")
     df["source"] = DATA_SOURCE
     df["updated_at"] = pd.Timestamp.utcnow()
+
+    missing_cols = REQUIRED_COLUMNS - set(df.columns)
+    if missing_cols:
+        raise RuntimeError(f"字段映射后仍缺少必要字段: {missing_cols}")
 
     ordered_columns = [
         "concept_code",
@@ -209,9 +215,7 @@ def load_concepts_from_db(table_name: str, filters: Optional[List[str]], db_hand
 
 
 def process_concept_task(
-    concept: Dict[str, str],
-    start_date: str,
-    end_date: str,
+    concept: Dict[str, str], start_date: str, end_date: str
 ) -> Tuple[Dict[str, str], Optional[pd.DataFrame], Optional[str]]:
     """线程任务：抓取并整理单个概念数据."""
     raw_df = fetch_concept_daily(concept, start_date, end_date)
@@ -273,15 +277,15 @@ def load_skip_names(file_path: str) -> List[str]:
     return names
 
 
-def sync_concepts(max_workers: int = DEFAULT_WORKERS, concept_file: Optional[str] = None):
+def sync_concepts(max_workers: int = DEFAULT_WORKERS, concept_file: Optional[str] = None) -> bool:
     """主流程入口."""
     start_date = normalize_ymd(START_DATE)
     end_date = normalize_ymd(END_DATE) if END_DATE else get_latest_trade_date()
     max_workers = max(1, int(max_workers))
     print("=" * 60)
-    print(f"[AData] 同步同花顺概念指数数据: {start_date} -> {end_date}")
+    print(f"[AkShare] 同步东方财富概念指数行情: {start_date} -> {end_date}")
     print(f"线程数: {max_workers}")
-    print(f"k_type={K_TYPE}, adjust_type={ADJUST_TYPE}, source={DATA_SOURCE}")
+    print(f"period={k_type_to_period(K_TYPE)}, adjust={ADJUST!r}, source={DATA_SOURCE}")
     print("=" * 60)
 
     db_handler = get_db_handler()
@@ -312,7 +316,7 @@ def sync_concepts(max_workers: int = DEFAULT_WORKERS, concept_file: Optional[str
             meta_table_used = CONCEPT_META_TABLE_NEW
 
     if not concepts:
-        print("数据库中未找到任何概念数据，请先运行 sync_ths_concept_list.py 并应用。")
+        print("数据库中未找到任何概念数据，请先运行 sync_em_concept_list.py。")
         return False
 
     if skip_names:
@@ -340,15 +344,13 @@ def sync_concepts(max_workers: int = DEFAULT_WORKERS, concept_file: Optional[str
         db_handler._existing_tables.discard(TABLE_NAME)  # noqa: SLF001
 
     first_batch = True
-
     total_records = 0
     success_concepts = 0
     failed_concepts: List[Tuple[str, str]] = []
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_map = {
-            executor.submit(process_concept_task, concept, start_date, end_date): concept
-            for concept in concepts
+            executor.submit(process_concept_task, concept, start_date, end_date): concept for concept in concepts
         }
 
         finished = 0
@@ -365,7 +367,7 @@ def sync_concepts(max_workers: int = DEFAULT_WORKERS, concept_file: Optional[str
                 prepared_df = None
 
             if error_msg or prepared_df is None:
-                failed_concepts.append((concept_name, error_msg))
+                failed_concepts.append((concept_name, error_msg or "未知错误"))
                 print(f"[{finished}/{total}] {concept_name} 失败: {error_msg}")
                 continue
 
@@ -390,7 +392,7 @@ def sync_concepts(max_workers: int = DEFAULT_WORKERS, concept_file: Optional[str
 
     print("-" * 60)
     if total_records == 0:
-        print(f"未能写入任何数据到 {TABLE_NAME_NEW}")
+        print(f"未能写入任何数据到 {TABLE_NAME}")
     else:
         print(f"同步完成：成功概念 {success_concepts}/{len(concepts)}，累计 {total_records} 条记录")
         print(f"数据已写入 {TABLE_NAME}")
@@ -403,6 +405,7 @@ def sync_concepts(max_workers: int = DEFAULT_WORKERS, concept_file: Optional[str
             print(f"  - {name}: {reason}")
         if len(failed_concepts) > len(preview):
             print(f"  ... 其余 {len(failed_concepts) - len(preview)} 个（详见 {FAILED_OUTPUT_PATH}）")
+
     return total_records > 0
 
 
@@ -424,7 +427,7 @@ def parse_cli_args(argv: List[str]) -> Tuple[int, Optional[str]]:
         else:
             raise ValueError(
                 "参数错误。用法示例: "
-                "python sync_ths_concepts_adata_adata.py workers 8 from-file failed_concepts.txt"
+                "python sync_em_concepts_daily_ak.py workers 8 from-file failed-em-concepts-daily.txt"
             )
     return workers, concept_file
 

@@ -33,7 +33,7 @@ export MYSQL_DATABASE=tushare_sync
 - `daily.py`：日线（支持 `range YYYYMMDD YYYYMMDD`）
 - `daily_qfq.py`：前复权日线（写入 `daily_qfq_new`；可用 `workers N`）
 - `apply_table.py`：用 `new` 表替换旧表（例：`python apply_table.py daily_qfq_new daily_qfq`）
-- `sync_ths_concept_list.py`：同花顺概念列表（覆盖 `ths_concept_list`）
+- `sync_em_concept_list.py`：同花顺概念列表（覆盖 `em_concept_list`）
 - `sync_ths_concepts_adata.py` / `sync_ths_concepts_ak.py`：同花顺概念指数日线（支持 `workers N`、`from-file failed_concepts.txt`）
 - `ths-concept-failed-concepts.py`：检查概念缺失；`--delete` 直接删除不全概念并写 `deleted_concepts.txt`
 

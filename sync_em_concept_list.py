@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-同步同花顺概念列表到数据库（直接覆盖正式表）
+同步东方财富概念列表到数据库（直接覆盖正式表）
 """
 import os
 import sys
@@ -8,16 +8,7 @@ import time
 from typing import Dict, List, Optional
 
 import pandas as pd
-
-# pywencai 内部可能通过 Node.js 执行脚本；部分 Node 版本会输出
-# `punycode` 的 DeprecationWarning，属于依赖噪音且不影响功能。
-# 默认抑制该类告警，如需显示可设置：TUSHARE_SYNC_SHOW_NODE_DEPRECATION=1
-if os.getenv("TUSHARE_SYNC_SHOW_NODE_DEPRECATION", "").strip().lower() not in {"1", "true", "yes"}:
-    node_options = os.environ.get("NODE_OPTIONS", "")
-    if "--no-deprecation" not in node_options:
-        os.environ["NODE_OPTIONS"] = (node_options + " --no-deprecation").strip()
-
-import pywencai
+import akshare as ak
 from sqlalchemy import text
 
 # 添加当前目录到 Python 路径
@@ -27,25 +18,20 @@ from db_handler import get_db_handler  # noqa: E402
 # -----------------------------
 # 可配置参数
 # -----------------------------
-CONCEPT_META_TABLE = "ths_concept_list"
+CONCEPT_META_TABLE = "em_concept_list"
 MAX_RETRIES = 3
 RETRY_BACKOFF_SECONDS = 5.0
-CONCEPT_NAME_FILTER: List[str] = []
-DATA_SOURCE = "tonghuashun"
+DATA_SOURCE = "eastmoney"
 
 
-def fetch_concept_list(filters: Optional[List[str]] = None) -> List[Dict[str, str]]:
-    """调用问财接口获取同花顺概念列表."""
-    print("正在获取同花顺概念列表...")
+def fetch_concept_list() -> List[Dict[str, str]]:
+    """调用 Akshare 接口获取东方财富概念列表."""
+    print("正在获取东方财富概念列表...")
     last_error = None
+    df = None
     for attempt in range(MAX_RETRIES):
         try:
-            df = pywencai.get(
-                query="同花顺概念指数",
-                query_type="zhishu",
-                sort_order="desc",
-                loop=True,
-            )
+            df = ak.stock_board_concept_name_em()
             if df is None or df.empty:
                 raise ValueError("返回数据为空")
             break
@@ -54,33 +40,26 @@ def fetch_concept_list(filters: Optional[List[str]] = None) -> List[Dict[str, st
             wait_time = RETRY_BACKOFF_SECONDS * (attempt + 1)
             print(f"获取概念列表失败，{wait_time:.1f} 秒后重试... ({exc})")
             time.sleep(wait_time)
-    else:
-        raise RuntimeError(f"获取同花顺概念列表失败: {last_error}")
+    
+    if df is None:
+        raise RuntimeError(f"获取东方财富概念列表失败: {last_error}")
 
-    required_columns = {"指数简称", "指数代码", "code"}
+    # Columns: ['排名', '板块名称', '板块代码', '最新价', '涨跌额', '涨跌幅', '总市值', '换手率', '涨跌家数', '领涨股票', '领涨股票-涨跌幅']
+    required_columns = {"板块名称", "板块代码"}
     missing_columns = required_columns - set(df.columns)
     if missing_columns:
-        raise RuntimeError(f"概念列表缺少必要字段: {missing_columns}")
+        raise RuntimeError(f"概念列表缺少必要字段: {missing_columns}. 实际字段: {df.columns.tolist()}")
 
     records: List[Dict[str, str]] = []
     seen_names = set()
-    filter_set = set(filters or [])
 
     for _, row in df.iterrows():
-        concept_name = str(row.get("指数简称", "")).strip()
+        concept_name = str(row.get("板块名称", "")).strip()
+        concept_code = str(row.get("板块代码", "")).strip()
+
         if not concept_name or concept_name.lower() == "nan":
             continue
-        if filters and concept_name not in filter_set:
-            continue
-
-        concept_code = str(row.get("指数代码", "")).strip()
-        short_code = str(row.get("code", "")).strip()
-
-        for candidate in (concept_code, short_code, concept_name):
-            if candidate and candidate.lower() != "nan":
-                concept_code = candidate
-                break
-
+        
         if concept_name in seen_names:
             continue
 
@@ -92,25 +71,15 @@ def fetch_concept_list(filters: Optional[List[str]] = None) -> List[Dict[str, st
         )
         seen_names.add(concept_name)
 
-    if filters:
-        missing = filter_set - {item["concept_name"] for item in records}
-        for name in missing:
-            print(f"警告: 未在问财结果中找到概念 {name}")
-
     print(f"共获取到 {len(records)} 个概念")
     return records
 
 
 def build_concept_meta_dataframe(records: List[Dict[str, str]]) -> pd.DataFrame:
-    """根据问财返回的数据构建概念元数据表."""
+    """构建概念元数据表."""
     df = pd.DataFrame(records)
     if df.empty:
         return df
-
-    df = df.dropna(subset=["concept_name"])
-    df["concept_name"] = df["concept_name"].astype(str).str.strip()
-    df["concept_code"] = df["concept_code"].astype(str).str.strip()
-    df = df[df["concept_name"] != ""]
 
     df["source"] = DATA_SOURCE
     df["updated_at"] = pd.Timestamp.utcnow()
@@ -120,12 +89,12 @@ def build_concept_meta_dataframe(records: List[Dict[str, str]]) -> pd.DataFrame:
 
 def sync_concept_list():
     print("=" * 60)
-    print("同步同花顺概念列表（覆盖正式表）")
+    print("同步东方财富概念列表（覆盖正式表）")
     print("=" * 60)
 
     try:
         db_handler = get_db_handler()
-        records = fetch_concept_list(CONCEPT_NAME_FILTER if CONCEPT_NAME_FILTER else None)
+        records = fetch_concept_list()
         df = build_concept_meta_dataframe(records)
         if df.empty:
             print("概念列表为空，结束。")
@@ -138,12 +107,16 @@ def sync_concept_list():
             conn.commit()
 
         df.to_sql(CONCEPT_META_TABLE, engine, if_exists="replace", index=False)
-        db_handler._create_indexes(CONCEPT_META_TABLE, df.columns.tolist())  # noqa: SLF001
+        try:
+            db_handler._create_indexes(CONCEPT_META_TABLE, df.columns.tolist())  # noqa: SLF001
+        except Exception as e:
+            print(f"索引创建警告: {e}")
+            
         with db_handler._table_lock:  # noqa: SLF001
             db_handler._existing_tables.add(CONCEPT_META_TABLE)  # noqa: SLF001
 
         print(f"概念列表已写入 {CONCEPT_META_TABLE}，共 {len(df)} 条记录")
-        print("操作完成，如需同步行情请运行 sync_ths_concepts_adata.py")
+        print("操作完成")
         return True
 
     except Exception as exc:  # pylint: disable=broad-except

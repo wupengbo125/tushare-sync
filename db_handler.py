@@ -34,7 +34,7 @@ UPSERT_TABLE_CONFIG = {
         'columns': [('ts_code', 20), ('trade_date', 20)],
         # default: INSERT IGNORE
     },
-    'ths_concept_index_daily': {
+    'em_concept_daily': {
         'unique_key': 'uniq_concept_trade_date',
         'columns': [('concept_code', 40), ('trade_date', 20)],
         # default: INSERT IGNORE
@@ -45,7 +45,7 @@ UPSERT_TABLE_CONFIG = {
         # 覆盖更新：同一个 concept_code 用最新数据替换
         'strategy': 'replace',  # values: ignore | replace
     },
-    # ths_concept_list 不需要临时表 UPSERT，整表重建
+    # em_concept_list 不需要临时表 UPSERT，整表重建
 }
 
 class DatabaseHandler:
@@ -187,14 +187,19 @@ class DatabaseHandler:
                 ('trade_date', 'INDEX'),
                 ('ts_code_trade_date', 'INDEX (ts_code, trade_date)'),
             ],
-            'ths_concept_index_daily': [
+            'em_concept_daily': [
                 ('concept_code', 'INDEX'),
                 ('trade_date', 'INDEX'),
                 ('concept_code_trade_date', 'INDEX (concept_code, trade_date)'),
             ],
-            'ths_concept_list': [
+            'em_concept_list': [
                 ('concept_code', 'INDEX'),
                 ('concept_name', 'INDEX'),
+            ],
+            'em_concept_daily': [
+                ('concept_code', 'INDEX'),
+                ('trade_date', 'INDEX'),
+                ('concept_code_trade_date', 'INDEX (concept_code, trade_date)'),
             ],
             'stock_hot_rank': [
                 ('stock_code', 'INDEX'),
@@ -231,7 +236,7 @@ class DatabaseHandler:
                                 if definition_table in ['daily', 'daily_qfq'] and 'ts_code' in index_type:
                                     # TEXT字段需要指定索引长度
                                     index_sql = f"CREATE INDEX {index_name_full} ON {table_name} (ts_code(20), trade_date(20))"
-                                elif definition_table == 'ths_concept_index_daily' and 'concept_code' in index_type:
+                                elif definition_table in ['em_concept_daily', 'em_concept_daily'] and 'concept_code' in index_type:
                                     index_sql = f"CREATE INDEX {index_name_full} ON {table_name} (concept_code(40), trade_date(20))"
                                 else:
                                     columns_part = index_type.split('(', 1)[1]
@@ -246,13 +251,17 @@ class DatabaseHandler:
                                 elif definition_table in ['daily', 'daily_qfq'] and index_name in ['ts_code', 'trade_date']:
                                     # TEXT字段需要指定索引长度
                                     index_sql = f"CREATE INDEX {index_name_full} ON {table_name} ({index_name}(20))"
-                                elif definition_table == 'ths_concept_list' and index_name == 'concept_code':
+                                elif definition_table == 'em_concept_list' and index_name == 'concept_code':
                                     index_sql = f"CREATE INDEX {index_name_full} ON {table_name} ({index_name}(40))"
-                                elif definition_table == 'ths_concept_list' and index_name == 'concept_name':
+                                elif definition_table == 'em_concept_list' and index_name == 'concept_name':
                                     index_sql = f"CREATE INDEX {index_name_full} ON {table_name} ({index_name}(100))"
-                                elif definition_table == 'ths_concept_index_daily' and index_name == 'concept_code':
+                                elif definition_table == 'em_concept_daily' and index_name == 'concept_code':
                                     index_sql = f"CREATE INDEX {index_name_full} ON {table_name} ({index_name}(40))"
-                                elif definition_table == 'ths_concept_index_daily' and index_name == 'trade_date':
+                                elif definition_table == 'em_concept_daily' and index_name == 'trade_date':
+                                    index_sql = f"CREATE INDEX {index_name_full} ON {table_name} ({index_name}(20))"
+                                elif definition_table == 'em_concept_daily' and index_name == 'concept_code':
+                                    index_sql = f"CREATE INDEX {index_name_full} ON {table_name} ({index_name}(40))"
+                                elif definition_table == 'em_concept_daily' and index_name == 'trade_date':
                                     index_sql = f"CREATE INDEX {index_name_full} ON {table_name} ({index_name}(20))"
                                 else:
                                     index_sql = f"CREATE INDEX {index_name_full} ON {table_name} ({index_name})"
