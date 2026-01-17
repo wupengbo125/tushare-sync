@@ -100,12 +100,14 @@ else
         -e MYSQL_DATABASE="${MYSQL_DATABASE}" \
         -e MYSQL_USER="${MYSQL_USER}" \
         -e MYSQL_PASSWORD="${MYSQL_PASSWORD}" \
-        -v "${DATA_DIR}:/var/lib/mysql" \
         --restart unless-stopped \
-        docker.1ms.run/library/mysql:8.0 \
+        -v "tushare:/var/lib/mysql" \
+        mysql:8.0 \
         --character-set-server=utf8mb4 \
         --collation-server=utf8mb4_unicode_ci \
-        --default-time-zone='+8:00'
+        --default-time-zone='+8:00' \
+        --binlog_expire_logs_seconds=86400 \
+        --max_binlog_size=128M    
 fi
 
 # 等待MySQL启动

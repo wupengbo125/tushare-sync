@@ -20,7 +20,7 @@ done
 
 
 # 同步股票的概念（周五）
-if [ "$(date +%u)" = "5" ]; then
+if [ "$(date +%u)" = "6" ]; then
 python sync_em_stock_concept_adata.py
 fi
 
