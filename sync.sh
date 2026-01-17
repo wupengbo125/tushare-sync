@@ -1,5 +1,8 @@
 #!/bin/bash
 # Load project environment variables
+export http_proxy=""
+export https_proxy=""
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 if [ -f "$SCRIPT_DIR/.env" ]; then
     . "$SCRIPT_DIR/.env"
