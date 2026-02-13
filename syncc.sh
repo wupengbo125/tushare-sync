@@ -13,10 +13,10 @@ cd "$SCRIPT_DIR"
 python sync_em_concept_list.py
 
 # 同步概念日线数据
-python sync_em_concepts_daily_adata.py workers 10
+# 同步概念日线数据
+python sync_em_concepts_daily_ak.py workers 1
 # 同步失败的概念日线数据
 for i in 1 2 3 ; do
-python sync_em_concepts_daily_adata.py from-file failed-em-concepts-daily.txt
 python sync_em_concepts_daily_ak.py from-file failed-em-concepts-daily.txt
 done
 

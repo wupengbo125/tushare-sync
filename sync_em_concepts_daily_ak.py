@@ -9,13 +9,67 @@
 import os
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 import akshare as ak
 import pandas as pd
 from sqlalchemy import text
+import requests
+import random
+import socket
+import struct
+
+# ==========================================
+# IP 伪装与反爬虫补丁 (Monkey Patch)
+# ==========================================
+def generate_random_ip():
+    """生成随机 IP 地址"""
+    return socket.inet_ntoa(struct.pack('>I', random.randint(1, 0xffffffff)))
+
+def get_random_ua():
+    """获取随机 User-Agent"""
+    user_agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Safari/605.1.15",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0"
+    ]
+    return random.choice(user_agents)
+
+# 保留原始的 requests.Session.request 方法
+_original_session_request = requests.Session.request
+
+def patched_session_request(self, method, url, *args, **kwargs):
+    """
+    修改后的请求方法，自动添加伪造的 IP 和随机 UA。
+    """
+    headers = kwargs.get("headers", {})
+    if not headers:
+        headers = {}
+    
+    # 随机 IP 骗过部分基于 XFF 的检测
+    fake_ip = generate_random_ip()
+    headers.update({
+        "User-Agent": get_random_ua(),
+        "X-Forwarded-For": fake_ip,
+        "Client-IP": fake_ip,
+        "X-Real-IP": fake_ip,
+        "Referer": "https://quote.eastmoney.com/"  # 伪装来源为东方财富
+    })
+    
+    kwargs["headers"] = headers
+    # 增加超时设置，防止被封时一直挂起
+    if "timeout" not in kwargs:
+        kwargs["timeout"] = 10
+        
+    return _original_session_request(self, method, url, *args, **kwargs)
+
+# 应用补丁：覆盖 standard requests behaviour
+requests.Session.request = patched_session_request
+# requests.request = patched_session_request  # Do NOT patch the top-level function with a bound method signature
+# ==========================================
 
 # 添加当前目录到 Python 路径，复用 db_handler
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -24,15 +78,15 @@ from db_handler import get_db_handler  # noqa: E402
 # -----------------------------
 # 可配置参数（方便后续调节）
 # -----------------------------
-START_DATE = "20210101"
+# 动态计算开始时间：当前时间前推 3 年
+START_DATE = (pd.Timestamp.now() - pd.DateOffset(years=3)).strftime("%Y%m%d")
 END_DATE = None  # 若为空则自动取最近交易日
 TABLE_NAME = "em_concept_daily"
 CONCEPT_META_TABLE = "em_concept_list"
 CONCEPT_META_TABLE_NEW = f"{CONCEPT_META_TABLE}_new"
-MAX_RETRIES = 3
-RETRY_BACKOFF_SECONDS = 15.0
-REQUEST_INTERVAL_SECONDS = 0.0
-DEFAULT_WORKERS = 10
+MAX_RETRIES = 1  # Fail fast if banned
+RETRY_BACKOFF_SECONDS = 1.0  # No need to wait long
+REQUEST_INTERVAL_SECONDS = 3.0  # Keep interval to be polite if working
 FAILED_OUTPUT_PATH = "failed-em-concepts-daily.txt"
 SKIP_NAMES_FILE = "ljg.txt"
 CONCEPT_NAME_FILTER: List[str] = []
@@ -217,7 +271,7 @@ def load_concepts_from_db(table_name: str, filters: Optional[List[str]], db_hand
 def process_concept_task(
     concept: Dict[str, str], start_date: str, end_date: str
 ) -> Tuple[Dict[str, str], Optional[pd.DataFrame], Optional[str]]:
-    """线程任务：抓取并整理单个概念数据."""
+    """抓取并整理单个概念数据."""
     raw_df = fetch_concept_daily(concept, start_date, end_date)
     if raw_df.empty:
         return concept, None, "返回数据为空"
@@ -277,14 +331,13 @@ def load_skip_names(file_path: str) -> List[str]:
     return names
 
 
-def sync_concepts(max_workers: int = DEFAULT_WORKERS, concept_file: Optional[str] = None) -> bool:
+def sync_concepts(concept_file: Optional[str] = None) -> bool:
     """主流程入口."""
     start_date = normalize_ymd(START_DATE)
     end_date = normalize_ymd(END_DATE) if END_DATE else get_latest_trade_date()
-    max_workers = max(1, int(max_workers))
     print("=" * 60)
     print(f"[AkShare] 同步东方财富概念指数行情: {start_date} -> {end_date}")
-    print(f"线程数: {max_workers}")
+    print(f"线程模式: 单线程")
     print(f"period={k_type_to_period(K_TYPE)}, adjust={ADJUST!r}, source={DATA_SOURCE}")
     print("=" * 60)
 
@@ -348,47 +401,43 @@ def sync_concepts(max_workers: int = DEFAULT_WORKERS, concept_file: Optional[str
     success_concepts = 0
     failed_concepts: List[Tuple[str, str]] = []
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_map = {
-            executor.submit(process_concept_task, concept, start_date, end_date): concept for concept in concepts
-        }
+    total = len(concepts)
+    for i, concept in enumerate(concepts):
+        finished = i + 1
+        concept_name = concept["concept_name"]
 
-        finished = 0
-        total = len(future_map)
-        for future in as_completed(future_map):
-            finished += 1
-            concept = future_map[future]
-            concept_name = concept["concept_name"]
+        try:
+            _, prepared_df, error_msg = process_concept_task(concept, start_date, end_date)
+        except Exception as exc:
+            error_msg = f"任务异常: {exc}"
+            prepared_df = None
 
-            try:
-                _, prepared_df, error_msg = future.result()
-            except Exception as exc:  # pylint: disable=broad-except
-                error_msg = f"任务异常: {exc}"
-                prepared_df = None
-
-            if error_msg or prepared_df is None:
-                failed_concepts.append((concept_name, error_msg or "未知错误"))
-                print(f"[{finished}/{total}] {concept_name} 失败: {error_msg}")
-                continue
-
-            try:
-                if first_batch:
-                    prepared_df.to_sql(TABLE_NAME, engine, if_exists="replace", index=False)
-                    db_handler._create_indexes(TABLE_NAME, prepared_df.columns.tolist())  # noqa: SLF001
-                    first_batch = False
-                else:
-                    prepared_df.to_sql(TABLE_NAME, engine, if_exists="append", index=False)
-
-                record_count = len(prepared_df)
-                total_records += record_count
-                success_concepts += 1
-                print(f"[{finished}/{total}] {concept_name} 同步完成，{record_count} 条记录")
-            except Exception as exc:  # pylint: disable=broad-except
-                failed_concepts.append((concept_name, f"写入失败: {exc}"))
-                print(f"[{finished}/{total}] {concept_name} 写入数据库失败: {exc}")
-
+        if error_msg or prepared_df is None:
+            failed_concepts.append((concept_name, error_msg or "未知错误"))
+            print(f"[{finished}/{total}] {concept_name} 失败: {error_msg}")
+            
             if REQUEST_INTERVAL_SECONDS > 0:
                 time.sleep(REQUEST_INTERVAL_SECONDS)
+            continue
+
+        try:
+            if first_batch:
+                prepared_df.to_sql(TABLE_NAME, engine, if_exists="replace", index=False)
+                db_handler._create_indexes(TABLE_NAME, prepared_df.columns.tolist())  # noqa: SLF001
+                first_batch = False
+            else:
+                prepared_df.to_sql(TABLE_NAME, engine, if_exists="append", index=False)
+
+            record_count = len(prepared_df)
+            total_records += record_count
+            success_concepts += 1
+            print(f"[{finished}/{total}] {concept_name} 同步完成，{record_count} 条记录")
+        except Exception as exc:  # pylint: disable=broad-except
+            failed_concepts.append((concept_name, f"写入失败: {exc}"))
+            print(f"[{finished}/{total}] {concept_name} 写入数据库失败: {exc}")
+
+        if REQUEST_INTERVAL_SECONDS > 0:
+            time.sleep(REQUEST_INTERVAL_SECONDS)
 
     print("-" * 60)
     if total_records == 0:
@@ -409,9 +458,8 @@ def sync_concepts(max_workers: int = DEFAULT_WORKERS, concept_file: Optional[str
     return total_records > 0
 
 
-def parse_cli_args(argv: List[str]) -> Tuple[int, Optional[str]]:
+def parse_cli_args(argv: List[str]) -> Optional[str]:
     """解析命令行参数."""
-    workers = DEFAULT_WORKERS
     concept_file = None
 
     idx = 1
@@ -419,7 +467,8 @@ def parse_cli_args(argv: List[str]) -> Tuple[int, Optional[str]]:
     while idx < length:
         arg = argv[idx]
         if arg == "workers" and idx + 1 < length:
-            workers = int(argv[idx + 1])
+            # 忽略 workers 参数
+            print("提示: 已强制改为单线程模式，忽略 workers 参数")
             idx += 2
         elif arg == "from-file" and idx + 1 < length:
             concept_file = argv[idx + 1]
@@ -427,14 +476,14 @@ def parse_cli_args(argv: List[str]) -> Tuple[int, Optional[str]]:
         else:
             raise ValueError(
                 "参数错误。用法示例: "
-                "python sync_em_concepts_daily_ak.py workers 8 from-file failed-em-concepts-daily.txt"
+                "python sync_em_concepts_daily_ak.py from-file failed-em-concepts-daily.txt"
             )
-    return workers, concept_file
+    return concept_file
 
 
 def main() -> bool:
-    workers, concept_file = parse_cli_args(sys.argv)
-    return sync_concepts(workers, concept_file)
+    concept_file = parse_cli_args(sys.argv)
+    return sync_concepts(concept_file)
 
 
 if __name__ == "__main__":
